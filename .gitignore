@@ -1,0 +1,37 @@
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Local Streamlit secrets
+.streamlit/secrets.toml
+
+# Local app data and saved client projects
+data/
+projects/
+
+# Local generated/exported files
+output/
+exports/
+*.docx
+*.pdf
+*.xlsx
+*.xlsm
+*.xls
+*.sdlxliff
+*.xliff
+*.xlf
+*.tmx
+*.idml
+
+# Local installers and large binaries
+*.exe
+*.msi
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
