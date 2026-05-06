@@ -249,7 +249,7 @@ def main() -> None:
         col_translate, col_proofread = st.columns(2)
         with col_translate:
             if st.button("Translate text", type="primary", use_container_width=True):
-                _translate(st.session_state.source_text, model)
+                _translate(st.session_state.source_text, source_language, target_language, domain, model)
             st.session_state.translated_text = st.text_area(
                 "Editable translation",
                 value=st.session_state.translated_text,
@@ -1242,7 +1242,7 @@ def _prompt_label(entry: dict[str, str]) -> str:
     )
 
 
-def _translate(source_text: str, model: str) -> None:
+def _translate(source_text: str, source_language: str, target_language: str, domain: str, model: str) -> None:
     """Call the translator and save the editable result."""
     progress = StepProgress("Translation")
     try:
