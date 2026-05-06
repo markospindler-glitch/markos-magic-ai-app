@@ -6,6 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile
 from xml.etree import ElementTree as ET
+import re
 
 import fitz
 import pandas as pd
@@ -16,9 +17,10 @@ from sdlxliff_pipeline import extract_editable_segments
 
 WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NAMESPACES = {"w": WORD_NAMESPACE}
+PROTECTED_TOKEN_RE = re.compile(r"\[\[(?:SEG_\d+_)?TAG_\d+(?:_OPEN|_CLOSE)?\]\]")
 
 
-def import_source_file(file_name: str, file_bytes: bytes) -> str:
+def import_source_file(file_name: str, file_bytes: bytes) -> str: 
     """Extract editable source text from an uploaded file."""
     suffix = Path(file_name).suffix.lower()
     if suffix == ".txt":
@@ -39,6 +41,9 @@ def import_source_file(file_name: str, file_bytes: bytes) -> str:
         return extract_xliff_source_text(file_bytes)
     raise ValueError("Unsupported file type. Upload a TXT, CSV, Excel, DOCX, PDF, IDML, SDLXLIFF, XLIFF, or XLF file.")
 
+def strip_protected_tokens(text: str) -> str:
+    """Remove SDLXLIFF protected inline-tag placeholders from display text."""
+    return " ".join(PROTECTED_TOKEN_RE.sub("", str(text or "")).split())
 
 def extract_csv_text(file_bytes: bytes) -> str:
     """Extract rows from a CSV file as readable text."""
