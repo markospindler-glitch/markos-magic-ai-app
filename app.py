@@ -97,7 +97,7 @@ DOMAINS = [
 
 def main() -> None:
     """Build the app screen and connect button clicks to the workflow."""
-    st.set_page_config(page_title="Marko's Magic AI App", layout="wide")
+    st.set_page_config(page_title="TranslatAI", layout="wide")
     _init_session_state()
     _apply_visual_style()
 
@@ -672,7 +672,7 @@ def _app_header() -> None:
     """Render the branded app header."""
     header_path = Path("assets") / "app_header.png"
     if not header_path.exists():
-        st.title("Marko's Magic AI App")
+        st.title("TranslatAI")
         return
 
     st.markdown(
@@ -680,7 +680,7 @@ def _app_header() -> None:
         <div class="magic-header">
             <img src="data:image/png;base64,{_image_base64(header_path)}" alt="">
             <div class="magic-header-content">
-                <h1>Marko's Magic AI App</h1>
+                <h1>TranslatAI</h1>
                 <p>AI-assisted translation, review, alignment, and delivery in one focused workspace.</p>
             </div>
         </div>

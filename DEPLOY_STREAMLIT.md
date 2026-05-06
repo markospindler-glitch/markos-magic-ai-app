@@ -1,4 +1,4 @@
-# Deploying Marko's Magic AI App to Streamlit Community Cloud
+# Deploying TranslatAI to Streamlit Community Cloud
 
 ## What Streamlit Cloud needs
 

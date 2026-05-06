@@ -1,10 +1,10 @@
-# Marko's Magic AI App - Technical and Product Review Brief for ChatGPT
+# TranslatAI - Technical and Product Review Brief for ChatGPT
 
 Last updated: 2026-05-03
 
 ## Purpose of this document
 
-This document summarizes the current state of **Marko's Magic AI App** so ChatGPT can act as a programmer, localization-technology consultant, and translation-industry software adviser.
+This document summarizes the current state of **TranslatAI** so ChatGPT can act as a programmer, localization-technology consultant, and translation-industry software adviser.
 
 Use this document as a briefing note. Paste it into ChatGPT and ask it to analyse the app, what has already been built, what is risky, and what the best next development steps should be.
 
@@ -14,7 +14,7 @@ The desired ChatGPT role is:
 
 ## Executive summary
 
-Marko's Magic AI App is a local Windows-friendly Streamlit app for AI-assisted translation work. It combines document/text import, GPT-5.5 source analysis, prompt creation, translation, proofreading, bilingual review, QA, export, Translation Memory support, reference-file support, project saving, pricing estimates, and an integrated handout translator.
+TranslatAI is a local Windows-friendly Streamlit app for AI-assisted translation work. It combines document/text import, GPT-5.5 source analysis, prompt creation, translation, proofreading, bilingual review, QA, export, Translation Memory support, reference-file support, project saving, pricing estimates, and an integrated handout translator.
 
 The app is already a broad working prototype. The main product question is no longer "Can this be built?" but "Which parts should be hardened, simplified, redesigned, or separated before it is used by a team?"
 
@@ -29,7 +29,7 @@ The most important technical areas for expert review are:
 
 ## Product goal
 
-Marko's Magic AI App is a local Windows-friendly Streamlit app for AI-assisted translation workflows. It is intended to help a translation team:
+TranslatAI is a local Windows-friendly Streamlit app for AI-assisted translation workflows. It is intended to help a translation team:
 
 - Import source text or documents.
 - Use OpenAI GPT-5.5 for analysis, prompt creation, translation, proofreading, QA, and alignment assistance.

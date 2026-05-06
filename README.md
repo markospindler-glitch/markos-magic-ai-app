@@ -1,4 +1,4 @@
-# Marko's Magic AI App
+# TranslatAI
 
 This is a simple Windows-friendly Streamlit app for a translation workflow.
 

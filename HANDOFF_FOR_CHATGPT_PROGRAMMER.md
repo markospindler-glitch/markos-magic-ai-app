@@ -6,7 +6,7 @@ Last updated: 2026-05-04
 
 Act as a world-class senior software engineer with strong experience in Python, Streamlit, document processing, localization technology, Trados Studio, SDLXLIFF/XLIFF/TMX, DOCX formatting, Excel files, and safe file export workflows.
 
-You are taking over a local Windows Streamlit app called **Marko's Magic AI App**. The owner is a translator/project manager, not a programmer. Your job is to fix practical problems without making the app more complicated.
+You are taking over a local Windows Streamlit app called **TranslatAI**. The owner is a translator/project manager, not a programmer. Your job is to fix practical problems without making the app more complicated.
 
 Primary goal right now:
 
@@ -72,7 +72,7 @@ requirements.txt
 
 ## What the app does
 
-Marko's Magic AI App is a local translation workflow app. It supports:
+TranslatAI is a local translation workflow app. It supports:
 
 - source file upload and source text extraction
 - source analysis
