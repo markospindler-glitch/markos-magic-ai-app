@@ -1258,9 +1258,6 @@ def _translate(source_text: str, source_language: str, target_language: str, dom
                 st.session_state.translation_prompt,
                 st.session_state.tm_context,
                 st.session_state.reference_context,
-                source_language,
-                target_language,
-                domain,
                 model=model.strip() or DEFAULT_MODEL,
                 progress_callback=lambda current, total: progress.update(
                     min(85, 20 + round((current / max(total, 1)) * 60)),
@@ -1280,9 +1277,6 @@ def _translate(source_text: str, source_language: str, target_language: str, dom
                 st.session_state.translation_prompt,
                 st.session_state.tm_context,
                 st.session_state.reference_context,
-                source_language,
-                target_language,
-                domain,
                 model=model.strip() or DEFAULT_MODEL,
             )
             st.session_state.bilingual_review_rows = []
