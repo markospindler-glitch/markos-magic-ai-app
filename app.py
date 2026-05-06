@@ -36,7 +36,7 @@ from export_pdf import create_pdf
 from export_same_format import create_same_format_file
 from export_xliff import create_xliff, create_xliff_from_aligned_rows, sentence_segments
 from file_validation import export_preflight_warnings, validate_sdlxliff_template, validate_source_upload
-from import_files import import_source_file
+from import_files import import_source_file, strip_protected_tokens
 from error_utils import show_streamlit_error
 from handout_translator_v1.app import render_handout_translator_section
 from net_word_grid import analyse_net_words
@@ -63,6 +63,7 @@ from translation_memory import create_tmx, find_tm_matches, format_tm_matches, i
 from text_stats import stats_label
 from ui_qa_export import render_qa_export_tab
 from xliff_aligner import align_fixed_source_segments, align_for_xliff, extract_text_from_xliff, quick_alignment_check
+from xliff_to_docx import create_docx_from_xliff_and_template
 
 
 LANGUAGES = [
@@ -138,8 +139,8 @@ def main() -> None:
     _current_cost_area()
     _workflow_status()
 
-    source_tab, context_tab, prompt_tab, translation_tab, handout_tab, qa_export_tab = st.tabs(
-        ["1 Source", "2 Context", "3 Prompt", "4 Translation", "5 Handout Translator", "6 QA & Export"]
+    source_tab, context_tab, prompt_tab, translation_tab, handout_tab, qa_export_tab, xliff_docx_tab = st.tabs(
+        ["1 Source", "2 Context", "3 Prompt", "4 Translation", "5 Handout Translator", "6 QA & Export", "7. XLIFF → DOCX"]
     )
 
     with source_tab:
@@ -331,6 +332,38 @@ def main() -> None:
             _qa,
             _export_area,
         )
+
+    with xliff_docx_tab:
+        st.subheader("XLIFF → DOCX")
+        st.write("Upload an ordinary XLIFF/XLF file and the original DOCX file. The app will use the XLIFF target segments and try to place them into the original DOCX template.")
+        
+        xliff_file = st.file_uploader("Upload XLIFF/XLF", type=["xlf", "xliff"], key="xliff_uploader")
+        docx_file = st.file_uploader("Upload original DOCX template", type=["docx"], key="docx_uploader")
+        
+        if st.button("Create translated DOCX", key="create_docx_button"):
+            if not xliff_file:
+                st.error("Please upload an XLIFF/XLF file.")
+            elif not docx_file:
+                st.error("Please upload the original DOCX template file.")
+            else:
+                try:
+                    docx_bytes = create_docx_from_xliff_and_template(xliff_file.getvalue(), docx_file.getvalue())
+                    st.session_state.translated_docx_bytes = docx_bytes
+                    st.session_state.translated_docx_name = Path(docx_file.name).stem + "_target.docx"
+                    st.success("Translated DOCX created successfully.")
+                except Exception as e:
+                    st.error(f"Failed to create translated DOCX: {str(e)}")
+        
+        if "translated_docx_bytes" in st.session_state:
+            st.download_button(
+                label="Download translated DOCX",
+                data=st.session_state.translated_docx_bytes,
+                file_name=st.session_state.translated_docx_name,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="download_docx"
+            )
+        
+        st.write("**Formatting preservation is best-effort.** This works best when the XLIFF segments correspond closely to the original DOCX text. Complex Word layouts, text boxes, floating shapes, comments, tracked changes, headers/footers, and unusual segmentation may require manual checking.")
 
     _autosave_active_project()
 
@@ -680,6 +713,12 @@ def _load_uploaded_file_once(uploaded_file) -> None:
     file_bytes = uploaded_file.getvalue()
     signature = f"{uploaded_file.name}:{len(file_bytes)}:{hash(file_bytes)}"
     if st.session_state.last_uploaded_source_signature == signature:
+        existing_type = st.session_state.get("source_file_type", "")
+        existing_text = st.session_state.get("source_text", "")
+        if existing_type in {"sdlxliff", "xliff", "xlf"} and "[[SEG_" in existing_text:
+            # The source text may have been imported by an older version of the app.
+            # Re-import it so the new SDLXLIFF cleanup logic takes effect.
+            _load_uploaded_file(uploaded_file, file_bytes)
         return
     if _load_uploaded_file(uploaded_file, file_bytes):
         st.session_state.last_uploaded_source_signature = signature
@@ -695,6 +734,8 @@ def _load_uploaded_file(uploaded_file, file_bytes: bytes | None = None) -> bool:
         validation_warnings = validate_source_upload(uploaded_file.name, file_bytes)
         progress.update(45, "Extracting source text")
         st.session_state.source_text = import_source_file(uploaded_file.name, file_bytes)
+        if uploaded_file.name.split(".")[-1].lower() in {"sdlxliff", "xliff", "xlf"}:
+            st.session_state.source_text = strip_protected_tokens(st.session_state.source_text)
         progress.update(75, "Saving file metadata")
         st.session_state.source_file_name = uploaded_file.name
         st.session_state.source_file_type = uploaded_file.name.split(".")[-1].lower()
@@ -1206,16 +1247,20 @@ def _translate(source_text: str, model: str) -> None:
     progress = StepProgress("Translation")
     try:
         progress.update(15, "Preparing translation request")
-        st.session_state.translation_prompt = ensure_text_for_translation_section(
-            st.session_state.translation_prompt,
-            source_text,
-        )
+        if st.session_state.translation_prompt.strip():
+            st.session_state.translation_prompt = ensure_text_for_translation_section(
+                st.session_state.translation_prompt,
+                source_text,
+            )
         if st.session_state.source_file_type == "sdlxliff" and st.session_state.source_file_bytes:
             result = translate_sdlxliff_segments(
                 st.session_state.source_file_bytes,
                 st.session_state.translation_prompt,
                 st.session_state.tm_context,
                 st.session_state.reference_context,
+                source_language,
+                target_language,
+                domain,
                 model=model.strip() or DEFAULT_MODEL,
                 progress_callback=lambda current, total: progress.update(
                     min(85, 20 + round((current / max(total, 1)) * 60)),
@@ -1235,6 +1280,9 @@ def _translate(source_text: str, model: str) -> None:
                 st.session_state.translation_prompt,
                 st.session_state.tm_context,
                 st.session_state.reference_context,
+                source_language,
+                target_language,
+                domain,
                 model=model.strip() or DEFAULT_MODEL,
             )
             st.session_state.bilingual_review_rows = []
