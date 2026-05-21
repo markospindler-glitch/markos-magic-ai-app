@@ -46,6 +46,19 @@ class StateManagerTests(unittest.TestCase):
         self.assertEqual("YWJj", snapshot["source_file_bytes_b64"])
         self.assertEqual("eHl6", snapshot["sdlxliff_template_bytes_b64"])
 
+    def test_project_snapshot_encodes_batch_source_files(self):
+        state = {
+            "source_files": [
+                {"name": "one.txt", "extension": "txt", "bytes": b"one", "text": "One"},
+                {"name": "two.txt", "extension": "txt", "bytes": b"two", "text": "Two"},
+            ]
+        }
+
+        snapshot = get_current_project_snapshot(state)
+
+        self.assertNotIn("bytes", snapshot["source_files"][0])
+        self.assertEqual("b25l", snapshot["source_files"][0]["bytes_b64"])
+
 
 class ProjectRepositoryStabilityTests(unittest.TestCase):
     def setUp(self):

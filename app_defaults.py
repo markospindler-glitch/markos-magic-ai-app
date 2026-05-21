@@ -1,4 +1,4 @@
-"""Central default values for Marko's Magic AI App.
+"""Central default values for TranslatAI.
 
 Keeping these values in one place reduces the chance that project loading,
 resetting, and session startup drift apart over time.
@@ -30,6 +30,7 @@ APP_STATE_DEFAULTS = {
     "rule_based_qa_warnings": [],
     "uploaded_file_metadata": {},
     "last_uploaded_source_signature": "",
+    "source_files": [],
     "source_file_name": "",
     "source_file_type": "",
     "source_file_bytes": b"",
@@ -71,6 +72,7 @@ PROJECT_STATE_KEYS = [
     "target_language",
     "text_type",
     "source_text",
+    "source_files",
     "source_file_name",
     "source_file_type",
     "uploaded_file_metadata",

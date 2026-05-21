@@ -52,6 +52,19 @@ class ActiveProjectTests(unittest.TestCase):
         self.assertEqual(b"abc", state["source_file_bytes"])
         self.assertEqual(b"xyz", state["sdlxliff_template_bytes"])
 
+    def test_apply_project_snapshot_restores_batch_source_files(self):
+        snapshot = {
+            "source_files": [
+                {"name": "one.txt", "extension": "txt", "text": "One", "bytes_b64": "b25l"},
+            ]
+        }
+        state = {}
+
+        apply_project_snapshot(snapshot, state)
+
+        self.assertEqual("one.txt", state["source_files"][0]["name"])
+        self.assertEqual(b"one", state["source_files"][0]["bytes"])
+
     def test_current_project_snapshot_round_trips_with_active_project(self):
         state = {"project_name": "Roundtrip", "source_file_bytes": b"abc"}
         snapshot = get_current_project_snapshot(state)

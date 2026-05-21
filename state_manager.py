@@ -50,6 +50,7 @@ def get_current_project_snapshot(state: MutableMapping[str, Any] | None = None) 
     """Collect a JSON-friendly snapshot for project saving."""
     target = state if state is not None else st.session_state
     snapshot = {key: copy.deepcopy(target.get(key, APP_STATE_DEFAULTS.get(key))) for key in PROJECT_STATE_KEYS}
+    snapshot["source_files"] = _encode_source_files(snapshot.get("source_files") or [])
 
     source_file_bytes = target.get("source_file_bytes") or b""
     snapshot["source_file_bytes_b64"] = (
@@ -76,6 +77,33 @@ def apply_project_snapshot(snapshot: dict[str, Any], state: MutableMapping[str, 
             target["sdlxliff_template_bytes"] = base64.b64decode(value) if value else b""
         elif key == "realigned_template_bytes_b64":
             target["realigned_template_bytes"] = base64.b64decode(value) if value else b""
+        elif key == "source_files":
+            target["source_files"] = _decode_source_files(value or [])
         else:
             target[key] = value
     ensure_state_defaults(target)
+
+
+def _encode_source_files(source_files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Encode batch source-file bytes so project JSON can be saved safely."""
+    encoded = []
+    for record in source_files:
+        clean_record = copy.deepcopy(record)
+        file_bytes = clean_record.pop("bytes", b"") or b""
+        clean_record["bytes_b64"] = base64.b64encode(file_bytes).decode("ascii") if file_bytes else ""
+        encoded.append(clean_record)
+    return encoded
+
+
+def _decode_source_files(source_files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Restore batch source-file bytes from a saved project snapshot."""
+    decoded = []
+    for record in source_files:
+        clean_record = copy.deepcopy(record)
+        encoded = clean_record.pop("bytes_b64", "")
+        if encoded and not clean_record.get("bytes"):
+            clean_record["bytes"] = base64.b64decode(encoded)
+        else:
+            clean_record["bytes"] = clean_record.get("bytes") or b""
+        decoded.append(clean_record)
+    return decoded

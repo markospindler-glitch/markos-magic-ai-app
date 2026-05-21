@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from openai_client import DEFAULT_MODEL, ask_openai
+from batch_files import batch_prompt_instruction, has_file_markers
 
 
 def proofread_translation(
@@ -44,6 +45,7 @@ Instructions:
 - Preserve paragraph breaks and line structure so formatted export still works.
 - Make precise improvements, not a loose rewrite.
 - Return only the fully proofread text, with no comments.
+{batch_prompt_instruction() if has_file_markers(translated_text) else ""}
 
 Translation to proofread:
 {translated_text}

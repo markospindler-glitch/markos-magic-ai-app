@@ -14,6 +14,12 @@ import streamlit as st
 from active_project import load_active_project, save_active_project
 from app_defaults import DEFAULT_SOURCE_LANGUAGE, DEFAULT_TARGET_LANGUAGE, DEFAULT_TEXT_TYPE
 from analysis import analyse_source_text, format_analysis_report
+from batch_files import (
+    build_combined_source_text,
+    create_batch_output_zip,
+    import_uploaded_source_files,
+    make_source_file_record,
+)
 from bilingual_review import build_review_rows, target_text_from_rows
 from cost_estimator import new_cost_entry, total_cost
 from deterministic_qa import run_rule_based_qa
@@ -153,13 +159,15 @@ def main() -> None:
             value=st.session_state.project_name,
             placeholder="Client name or job number",
         )
-        uploaded_file = st.file_uploader(
-            "Upload source file",
+        uploaded_files = st.file_uploader(
+            "Upload source file(s)",
             type=["txt", "csv", "docx", "pdf", "idml", "xlsx", "xls", "xlsm", "sdlxliff", "xliff", "xlf"],
             help="SDLXLIFF/XLIFF imports source segments for translation. DOCX and IDML keep the best chance of preserving design. PDF import extracts selectable text only; no OCR.",
+            accept_multiple_files=True,
         )
-        if uploaded_file:
-            _load_uploaded_file_once(uploaded_file)
+        if uploaded_files:
+            _load_uploaded_files_once(uploaded_files)
+        _source_files_summary()
 
         source_text = st.text_area(
             "Source text",
@@ -708,6 +716,26 @@ def _image_base64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("ascii")
 
 
+def _load_uploaded_files_once(uploaded_files) -> None:
+    """Import one or more selected source files once per file selection."""
+    files = list(uploaded_files or [])
+    if not files:
+        return
+    if len(files) == 1:
+        _load_uploaded_file_once(files[0])
+        return
+
+    signature_parts = []
+    for uploaded_file in files:
+        file_bytes = uploaded_file.getvalue()
+        signature_parts.append(f"{uploaded_file.name}:{len(file_bytes)}:{hash(file_bytes)}")
+    signature = "|".join(signature_parts)
+    if st.session_state.last_uploaded_source_signature == signature:
+        return
+    if _load_multiple_uploaded_files(files):
+        st.session_state.last_uploaded_source_signature = signature
+
+
 def _load_uploaded_file_once(uploaded_file) -> None:
     """Import a selected source file once per file selection."""
     file_bytes = uploaded_file.getvalue()
@@ -722,6 +750,46 @@ def _load_uploaded_file_once(uploaded_file) -> None:
         return
     if _load_uploaded_file(uploaded_file, file_bytes):
         st.session_state.last_uploaded_source_signature = signature
+
+
+def _load_multiple_uploaded_files(uploaded_files) -> bool:
+    """Extract text from several uploaded files and keep them as one project."""
+    progress = StepProgress("Batch file import")
+    try:
+        progress.update(15, "Reading uploaded files")
+        source_files = import_uploaded_source_files(uploaded_files)
+        progress.update(65, "Combining source text")
+        st.session_state.source_files = source_files
+        st.session_state.source_text = build_combined_source_text(source_files)
+        st.session_state.source_file_name = f"{len(source_files)} source files"
+        st.session_state.source_file_type = "multiple"
+        st.session_state.source_file_bytes = b""
+        st.session_state.uploaded_file_metadata = {
+            "file_count": len(source_files),
+            "files": [
+                {
+                    "name": record.get("name", ""),
+                    "extension": record.get("extension", ""),
+                    "size_bytes": record.get("size_bytes", 0),
+                }
+                for record in source_files
+            ],
+        }
+        progress.update(85, "Clearing old generated outputs")
+        _clear_downstream_outputs()
+        progress.done("Source files loaded")
+        st.success(f"Loaded {len(source_files)} source files.")
+        for record in source_files:
+            for warning in record.get("warnings", []):
+                st.warning(f"{record.get('name')}: {warning}")
+        st.info(
+            "The source text now contains TranslatAI file markers. Keep those markers in the translation "
+            "and proofreading text so the app can split the outputs back into separate files."
+        )
+        return True
+    except Exception as exc:
+        show_streamlit_error("file_import", exc)
+        return False
 
 
 def _load_uploaded_file(uploaded_file, file_bytes: bytes | None = None) -> bool:
@@ -745,6 +813,14 @@ def _load_uploaded_file(uploaded_file, file_bytes: bytes | None = None) -> bool:
             "extension": st.session_state.source_file_type,
             "size_bytes": len(file_bytes),
         }
+        st.session_state.source_files = [
+            make_source_file_record(
+                uploaded_file.name,
+                file_bytes,
+                st.session_state.source_text,
+                validation_warnings,
+            )
+        ]
         _clear_downstream_outputs()
         progress.done("Source file loaded")
         st.success(f"Loaded source text from {uploaded_file.name}.")
@@ -766,6 +842,38 @@ def _load_uploaded_file(uploaded_file, file_bytes: bytes | None = None) -> bool:
     except Exception as exc:
         show_streamlit_error("file_import", exc)
         return False
+
+
+def _source_files_summary() -> None:
+    """Show which files are currently active in the project."""
+    source_files = st.session_state.get("source_files") or []
+    if not source_files:
+        return
+    if len(source_files) == 1:
+        record = source_files[0]
+        st.caption(
+            f"Active source file: {record.get('name', '')} "
+            f"({str(record.get('extension', '')).upper()}, {record.get('size_bytes', 0):,} bytes)"
+        )
+        return
+
+    rows = []
+    for index, record in enumerate(source_files, start=1):
+        text = str(record.get("text") or "")
+        rows.append(
+            {
+                "File": index,
+                "Name": record.get("name", ""),
+                "Type": str(record.get("extension", "")).upper(),
+                "Words": len(text.split()),
+                "Size": f"{record.get('size_bytes', 0):,} bytes",
+            }
+        )
+    st.dataframe(rows, hide_index=True, use_container_width=True)
+    st.caption(
+        "Batch mode is active. Keep the TranslatAI file markers in the editable source, translation, "
+        "and proofread text so exports can be split into one file per upload."
+    )
 
 
 def _price_list_area() -> None:
@@ -1696,6 +1804,12 @@ def _qa_readiness_row() -> dict[str, str]:
 
 
 def _file_template_readiness_row(final_translation: str) -> dict[str, str]:
+    if _is_batch_project():
+        return {
+            "Check": "Batch source files",
+            "Status": "Ready",
+            "Details": f"{len(st.session_state.get('source_files') or [])} source file(s) will export as one ZIP.",
+        }
     file_type = st.session_state.source_file_type
     if file_type == "docx":
         if not st.session_state.source_file_bytes:
@@ -1782,8 +1896,45 @@ def _export_area(
         st.info("Translate or proofread the text first. The export button will appear when final target text exists.")
         return
 
+    if _is_batch_project():
+        _batch_export_area(export_base, final_translation)
+        return
+
     _simple_same_format_export_button(export_base, file_type, final_translation)
     _simple_same_format_warning(file_type)
+
+
+def _is_batch_project() -> bool:
+    """Return True when this project has more than one uploaded source file."""
+    return len(st.session_state.get("source_files") or []) > 1
+
+
+def _batch_export_area(export_base: str, final_translation: str) -> None:
+    """Show one simple ZIP export for multi-file projects."""
+    source_files = st.session_state.get("source_files") or []
+    st.info(
+        f"This project contains {len(source_files)} source files. Export creates one target file per source file "
+        "and downloads them together as a ZIP."
+    )
+    try:
+        zip_bytes, summary = create_batch_output_zip(source_files, final_translation)
+        st.download_button(
+            "Download all target files (ZIP)",
+            data=zip_bytes,
+            file_name=f"{export_base}_target_files.zip",
+            mime="application/zip",
+            use_container_width=True,
+            type="primary",
+            key="batch_same_format_export",
+        )
+        st.success(f"Prepared {summary['exported']} output file(s).")
+        if summary.get("errors"):
+            with st.expander("Some files need attention", expanded=True):
+                for error in summary["errors"]:
+                    st.warning(error)
+    except Exception as exc:
+        st.button("Download all target files (ZIP)", use_container_width=True, disabled=True)
+        st.error(f"Batch export could not be prepared yet. {exc}")
 
 
 def _simple_same_format_export_button(export_base: str, file_type: str, final_translation: str) -> None:
@@ -2218,10 +2369,21 @@ def _combined_report() -> str:
 
 def _export_base_name() -> str:
     """Use the uploaded source filename as the export base when available."""
+    if _is_batch_project():
+        project_name = str(st.session_state.get("project_name") or "").strip()
+        if project_name:
+            return _safe_export_stem(project_name)
+        return "translation_batch"
     file_name = st.session_state.source_file_name.strip()
     if not file_name:
         return "translation"
-    return Path(file_name).stem or "translation"
+    return _safe_export_stem(Path(file_name).stem or "translation")
+
+
+def _safe_export_stem(value: str) -> str:
+    """Keep generated download names readable and filesystem-friendly."""
+    cleaned = "".join(character if character.isalnum() or character in "._-" else "_" for character in value.strip())
+    return cleaned.strip("_") or "translation"
 
 
 def _prepare_aligned_xliff(

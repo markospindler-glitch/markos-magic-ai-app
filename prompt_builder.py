@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from openai_client import DEFAULT_MODEL, ask_openai
+from batch_files import batch_prompt_instruction, has_file_markers
 
 
 def build_translation_prompt(
@@ -39,6 +40,7 @@ It must also instruct the model to:
 - Keep terminology consistent.
 - Preserve names, numbers, dates, units, and formatting where appropriate.
 - Preserve paragraph breaks: one source paragraph should become one target paragraph.
+- If the source contains TranslatAI file markers, preserve every marker exactly.
 - If the source came from a DOCX/PDF layout, keep headings, lists, and line structure as stable as possible.
 - Avoid adding information.
 - Return only the translated text.
@@ -71,4 +73,6 @@ def ensure_text_for_translation_section(prompt: str, source_text: str) -> str:
 
     marker = "The text for translation:"
     prompt_without_old_section = prompt.split(marker, 1)[0].rstrip()
+    if has_file_markers(source_text) and "TRANSLATAI_FILE_" not in prompt_without_old_section:
+        prompt_without_old_section = f"{prompt_without_old_section}\n\n{batch_prompt_instruction()}"
     return f"{prompt_without_old_section}\n\n{marker}\n{source_text.strip()}"
