@@ -29,7 +29,12 @@ from diff_view import (
     proofreading_diff_html,
     reject_proofreading_change,
 )
-from export_docx import create_bilingual_docx_from_rows, create_docx, create_formatted_docx_from_template
+from export_docx import (
+    create_bilingual_docx_from_rows,
+    create_docx,
+    create_formatted_docx_from_template,
+    read_bilingual_docx_review,
+)
 from export_bilingual_template import (
     BILINGUAL_EXTENSIONS,
     bilingual_source_segment_count,
@@ -291,6 +296,7 @@ def main() -> None:
             if st.session_state.bilingual_review_status:
                 st.success(st.session_state.bilingual_review_status)
                 st.session_state.bilingual_review_status = ""
+            _bilingual_docx_review_roundtrip()
             st.session_state.review_row_index = st.number_input(
                 "Expanded row editor",
                 min_value=1,
@@ -1511,19 +1517,106 @@ def _apply_bilingual_review_table() -> None:
     """Use edited review rows as the final target text."""
     try:
         st.session_state.proofread_text = target_text_from_rows(st.session_state.bilingual_review_rows)
-        st.session_state.aligned_xliff_bytes = b""
-        st.session_state.aligned_xliff_summary = ""
-        st.session_state.aligned_rows = []
-        st.session_state.realigned_xliff_bytes = b""
-        st.session_state.realigned_xliff_summary = ""
-        st.session_state.realigned_rows = []
-        st.session_state.realigned_template_name = ""
-        st.session_state.realigned_template_type = ""
-        st.session_state.realigned_template_bytes = b""
-        st.session_state.reflow_summary = ""
+        _clear_bilingual_outputs_after_review_change()
         st.success("Reviewed target text applied as the final translation.")
     except Exception as exc:
         st.error(f"Could not apply bilingual review table: {exc}")
+
+
+def _bilingual_docx_review_roundtrip() -> None:
+    """Export/reimport the manual bilingual review table as a reviewer DOCX."""
+    rows = _review_table_aligned_rows()
+    if not rows:
+        return
+
+    with st.expander("Bilingual DOCX review round-trip", expanded=False):
+        st.caption(
+            "Download the bilingual DOCX, edit only the Target column in Word, then reupload it here. "
+            "Imported corrections update the in-app bilingual table and final export text."
+        )
+        col_download, col_upload = st.columns(2)
+        with col_download:
+            try:
+                review_docx = create_bilingual_docx_from_rows(rows)
+                st.download_button(
+                    "Download bilingual review DOCX",
+                    data=review_docx,
+                    file_name=f"{_export_base_name()}_bilingual_review.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True,
+                    key="manual_review_docx_download",
+                )
+            except Exception as exc:
+                st.info(f"Bilingual review DOCX is not available yet. {exc}")
+        with col_upload:
+            corrected_docx = st.file_uploader(
+                "Reupload corrected bilingual DOCX",
+                type=["docx"],
+                key="manual_review_docx_reupload",
+                help="Use the DOCX exported by this app. Corrections are read from the Target column.",
+            )
+            if corrected_docx and st.button(
+                "Apply corrections from DOCX",
+                use_container_width=True,
+                key="apply_manual_review_docx",
+            ):
+                _apply_bilingual_docx_review(corrected_docx)
+
+
+def _apply_bilingual_docx_review(corrected_docx) -> None:
+    """Update manual bilingual review rows from a corrected DOCX target column."""
+    try:
+        imported_rows = read_bilingual_docx_review(corrected_docx.getvalue())
+        updated_count = _merge_bilingual_docx_rows(imported_rows)
+        if updated_count == 0:
+            raise ValueError("No matching segment corrections were found in the uploaded DOCX.")
+        st.session_state.proofread_text = target_text_from_rows(st.session_state.bilingual_review_rows)
+        _clear_bilingual_outputs_after_review_change()
+        st.session_state.bilingual_review_editor_version += 1
+        st.session_state.bilingual_review_status = (
+            f"Imported {updated_count} corrected target segment(s) from the bilingual DOCX."
+        )
+        st.rerun()
+    except Exception as exc:
+        st.error(f"Corrected bilingual DOCX could not be imported: {exc}")
+
+
+def _merge_bilingual_docx_rows(imported_rows: list[dict[str, str]]) -> int:
+    """Merge corrected DOCX target cells back into the current review rows."""
+    current_rows = st.session_state.bilingual_review_rows or []
+    current_by_segment = {
+        str(row.get("Segment") or index).strip(): row
+        for index, row in enumerate(current_rows, start=1)
+    }
+    updated_count = 0
+    for index, imported in enumerate(imported_rows, start=1):
+        segment = str(imported.get("Segment") or index).strip()
+        current = current_by_segment.get(segment)
+        if current is None and index <= len(current_rows):
+            current = current_rows[index - 1]
+        if current is None:
+            continue
+        new_target = str(imported.get("Target") or "")
+        current["Target"] = new_target
+        note = str(current.get("Review note") or "").strip()
+        imported_note = str(imported.get("Review note") or "").strip()
+        current["Review note"] = imported_note or note or "Target imported from corrected bilingual DOCX."
+        updated_count += 1
+    return updated_count
+
+
+def _clear_bilingual_outputs_after_review_change() -> None:
+    """Clear generated bilingual exports that no longer match reviewed rows."""
+    st.session_state.aligned_xliff_bytes = b""
+    st.session_state.aligned_xliff_summary = ""
+    st.session_state.aligned_rows = []
+    st.session_state.realigned_xliff_bytes = b""
+    st.session_state.realigned_xliff_summary = ""
+    st.session_state.realigned_rows = []
+    st.session_state.realigned_template_name = ""
+    st.session_state.realigned_template_type = ""
+    st.session_state.realigned_template_bytes = b""
+    st.session_state.reflow_summary = ""
 
 
 def _realign_bilingual_review_table(

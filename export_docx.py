@@ -98,6 +98,48 @@ def create_bilingual_docx_from_rows(rows: list[dict[str, str]]) -> bytes:
     return file_buffer.getvalue()
 
 
+def read_bilingual_docx_review(docx_bytes: bytes) -> list[dict[str, str]]:
+    """Read corrected target text from a bilingual review DOCX table.
+
+    Reviewers are expected to edit the Target column. The Segment column is
+    used to put corrections back into the matching in-app review rows.
+    """
+    if not docx_bytes:
+        raise ValueError("Upload a corrected bilingual DOCX first.")
+
+    document = Document(BytesIO(docx_bytes))
+    for table in document.tables:
+        if not table.rows:
+            continue
+        headers = [_cell_text(cell).lower() for cell in table.rows[0].cells]
+        if "segment" not in headers or "target" not in headers:
+            continue
+        segment_col = headers.index("segment")
+        target_col = headers.index("target")
+        source_col = headers.index("source") if "source" in headers else None
+        note_col = headers.index("note") if "note" in headers else None
+        rows = []
+        for table_row in table.rows[1:]:
+            cells = table_row.cells
+            segment = _cell_text(cells[segment_col]) if segment_col < len(cells) else ""
+            target = _cell_text(cells[target_col]) if target_col < len(cells) else ""
+            source = _cell_text(cells[source_col]) if source_col is not None and source_col < len(cells) else ""
+            note = _cell_text(cells[note_col]) if note_col is not None and note_col < len(cells) else ""
+            if segment or source or target:
+                rows.append(
+                    {
+                        "Segment": segment,
+                        "Source": source,
+                        "Target": target,
+                        "Review note": note,
+                    }
+                )
+        if rows:
+            return rows
+
+    raise ValueError("No bilingual review table was found. Use the DOCX exported by this app.")
+
+
 def create_formatted_docx_from_template(template_bytes: bytes, translated_text: str) -> bytes:
     """Replace text in the original DOCX while keeping the document XML.
 
@@ -219,6 +261,11 @@ def _replace_text_nodes(text_nodes: list, replacement: str) -> None:
             cursor += share
         node.text = chunk
         _set_space_preserve(node, chunk)
+
+
+def _cell_text(cell) -> str:
+    """Read all paragraph text from a Word table cell."""
+    return "\n".join(paragraph.text for paragraph in cell.paragraphs).strip()
 
 
 def _set_space_preserve(node, text: str) -> None:
