@@ -33,8 +33,13 @@ from export_docx import (
     create_bilingual_docx_from_rows,
     create_docx,
     create_formatted_docx_from_template,
-    read_bilingual_docx_review,
 )
+try:
+    from export_docx import read_bilingual_docx_review
+except ImportError:
+    def read_bilingual_docx_review(_docx_bytes: bytes) -> list[dict[str, str]]:
+        """Fallback when Streamlit deploys app.py before the matching export_docx.py."""
+        raise ValueError("The bilingual DOCX importer is still deploying. Reboot the app and try again.")
 from export_bilingual_template import (
     BILINGUAL_EXTENSIONS,
     bilingual_source_segment_count,
