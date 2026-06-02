@@ -408,21 +408,23 @@ def _option_index(options: list[str], current_value: str, fallback: str) -> int:
 
 
 def _apply_visual_style() -> None:
-    """Apply light visual polish to Streamlit's default UI."""
+    """Apply compact red-and-white styling inspired by the workload board."""
     st.markdown(
         """
         <style>
         :root {
-            --magic-bg: #eef1f0;
+            --magic-bg: #f6f7f8;
             --magic-panel: #ffffff;
-            --magic-border: #d7dedb;
-            --magic-border-strong: #bcc8c3;
-            --magic-text: #252827;
-            --magic-muted: #66706c;
-            --magic-green: #1e6f64;
-            --magic-green-dark: #184f48;
-            --magic-green-soft: #edf7f3;
-            --magic-gold: #d49a2f;
+            --magic-panel-soft: #fffafa;
+            --magic-border: #ead6d9;
+            --magic-border-strong: #f1b8c2;
+            --magic-text: #111827;
+            --magic-muted: #64515a;
+            --magic-red: #e91545;
+            --magic-red-dark: #be123c;
+            --magic-red-soft: #fff1f4;
+            --magic-blue: #2563eb;
+            --magic-good: #16a34a;
         }
         html,
         body,
@@ -431,12 +433,12 @@ def _apply_visual_style() -> None:
             color: var(--magic-text);
         }
         .block-container {
-            padding-top: 1.35rem;
+            padding-top: 1rem;
             padding-bottom: 2rem;
             max-width: 1540px;
         }
         [data-testid="stSidebar"] {
-            background: #f8faf9;
+            background: #ffffff;
             border-right: 1px solid var(--magic-border);
         }
         [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
@@ -450,10 +452,12 @@ def _apply_visual_style() -> None:
         }
         h1 {
             color: var(--magic-text);
+            font-weight: 800;
         }
         h2,
         h3 {
-            color: #343938;
+            color: var(--magic-text);
+            font-weight: 800;
         }
         p,
         .stCaptionContainer,
@@ -471,77 +475,140 @@ def _apply_visual_style() -> None:
             background: var(--magic-panel);
             border: 1px solid var(--magic-border);
             border-radius: 8px;
-            box-shadow: 0 10px 24px rgba(48, 58, 55, 0.055);
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.045);
             overflow: hidden;
+        }
+        [data-testid="stExpander"] summary {
+            color: var(--magic-text);
+            font-weight: 750;
+        }
+        [data-testid="stTabs"] [role="tablist"] {
+            gap: 0.35rem;
+            border-bottom: 0;
+            justify-content: center;
+            margin-bottom: 1rem;
+        }
+        [data-testid="stTabs"] [role="tab"] {
+            border-radius: 999px;
+            padding: 0.6rem 1rem;
+            color: var(--magic-muted);
+            font-weight: 750;
+        }
+        [data-testid="stTabs"] [aria-selected="true"] {
+            background: var(--magic-red);
+            color: #ffffff;
+        }
+        [data-testid="stTabs"] [role="tab"] div {
+            color: inherit;
+        }
+        textarea,
+        input,
+        [data-baseweb="select"] > div,
+        [data-baseweb="base-input"] {
+            border-radius: 8px;
         }
         .stButton > button,
         .stDownloadButton > button {
             min-height: 39px;
-            border-radius: 6px;
-            border: 1px solid #c6d2ce;
-            background: #f7faf8;
-            color: #1d574f;
+            border-radius: 8px;
+            border: 1px solid var(--magic-border-strong);
+            background: #ffffff;
+            color: var(--magic-red);
             font-weight: 700;
             box-shadow: none;
         }
         .stButton > button:hover,
         .stDownloadButton > button:hover {
-            border-color: var(--magic-green);
-            color: var(--magic-green-dark);
-            background: var(--magic-green-soft);
+            border-color: var(--magic-red);
+            color: var(--magic-red-dark);
+            background: var(--magic-red-soft);
         }
         .stButton > button[kind="primary"],
         .stDownloadButton > button[kind="primary"] {
             border: 0;
-            background: var(--magic-green);
+            background: var(--magic-red);
             color: #ffffff;
         }
         .stButton > button[kind="primary"]:hover,
         .stDownloadButton > button[kind="primary"]:hover {
-            background: var(--magic-green-dark);
+            background: var(--magic-red-dark);
             color: #ffffff;
         }
         .magic-header {
-            position: relative;
-            min-height: 205px;
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 1rem;
+            min-height: 98px;
             border-radius: 8px;
-            overflow: hidden;
-            margin-bottom: 1rem;
+            margin-bottom: 0.9rem;
             border: 1px solid var(--magic-border);
             background: var(--magic-panel);
-            box-shadow: 0 14px 30px rgba(48, 58, 55, 0.08);
+            box-shadow: 0 16px 34px rgba(15, 23, 42, 0.07);
+            padding: 1rem 1.15rem;
         }
-        .magic-header img {
-            width: 100%;
-            height: 205px;
-            object-fit: cover;
-            display: block;
-            filter: saturate(0.85) contrast(1.02);
+        .magic-logo {
+            width: 88px;
+            height: 70px;
+            border: 1px solid var(--magic-border);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--magic-red);
+            font-weight: 850;
+            letter-spacing: 0;
+            background: #fff;
         }
-        .magic-header::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            background: linear-gradient(90deg, rgba(24, 79, 72, 0.88), rgba(30, 111, 100, 0.48), rgba(30, 111, 100, 0.12));
+        .magic-logo span {
+            font-size: 1.15rem;
         }
         .magic-header-content {
-            position: absolute;
-            z-index: 1;
-            left: 1.75rem;
-            bottom: 1.35rem;
-            max-width: 640px;
-            color: white;
+            min-width: 0;
         }
         .magic-header-content h1 {
             margin: 0 0 0.35rem 0;
-            font-size: 2rem;
+            font-size: 1.55rem;
             line-height: 1.15;
             letter-spacing: 0;
+            color: var(--magic-text);
         }
         .magic-header-content p {
             margin: 0;
-            color: rgba(255, 255, 255, 0.88);
-            font-size: 1rem;
+            color: var(--magic-muted);
+            font-size: 0.95rem;
+        }
+        .magic-kicker {
+            color: var(--magic-red);
+            font-size: 0.78rem;
+            font-weight: 850;
+            text-transform: uppercase;
+            margin-bottom: 0.2rem;
+        }
+        .magic-header-stats {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(120px, 1fr));
+            gap: 0.55rem;
+        }
+        .magic-stat {
+            border: 1px solid var(--magic-border);
+            border-radius: 8px;
+            padding: 0.65rem 0.75rem;
+            background: #fffdfd;
+            min-height: 64px;
+        }
+        .magic-stat span {
+            display: block;
+            color: var(--magic-muted);
+            font-size: 0.76rem;
+            font-weight: 750;
+            margin-bottom: 0.25rem;
+        }
+        .magic-stat strong {
+            display: block;
+            color: var(--magic-red);
+            font-size: 1.25rem;
+            line-height: 1.1;
         }
         .workflow-strip {
             display: grid;
@@ -558,14 +625,14 @@ def _apply_visual_style() -> None:
             padding: 0.75rem 0.8rem;
             background: var(--magic-panel);
             min-height: 62px;
-            box-shadow: 0 10px 24px rgba(48, 58, 55, 0.055);
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
         }
         .workflow-pill.done {
-            border-color: #9db2aa;
-            background: var(--magic-green-soft);
+            border-color: var(--magic-border-strong);
+            background: var(--magic-red-soft);
         }
         .workflow-pill.pending {
-            background: #fbfcfb;
+            background: #ffffff;
         }
         .workflow-icon {
             display: inline-flex;
@@ -576,12 +643,12 @@ def _apply_visual_style() -> None:
             border-radius: 999px;
             font-weight: 700;
             color: #65706c;
-            background: #eef1f0;
+            background: #f3f4f6;
             flex: 0 0 auto;
         }
         .workflow-pill.done .workflow-icon {
             color: #ffffff;
-            background: var(--magic-green);
+            background: var(--magic-red);
         }
         .workflow-text {
             display: flex;
@@ -618,7 +685,7 @@ def _apply_visual_style() -> None:
         }
         .net-grid-summary strong {
             display: block;
-            color: var(--magic-green-dark);
+            color: var(--magic-red);
             font-size: 1.75rem;
             line-height: 1.1;
         }
@@ -638,7 +705,7 @@ def _apply_visual_style() -> None:
         }
         .cost-summary-box strong {
             display: block;
-            color: var(--magic-green-dark);
+            color: var(--magic-red);
             font-size: 1.9rem;
             line-height: 1.1;
         }
@@ -663,7 +730,7 @@ def _apply_visual_style() -> None:
             border-radius: 4px;
         }
         .proof-diff ins {
-            color: var(--magic-green-dark);
+            color: #166534;
             background: #d1fae5;
             text-decoration: none;
             padding: 0.08rem 0.18rem;
@@ -674,6 +741,12 @@ def _apply_visual_style() -> None:
             border: 1px solid var(--magic-border);
         }
         @media (max-width: 900px) {
+            .magic-header {
+                grid-template-columns: 1fr;
+            }
+            .magic-header-stats {
+                grid-template-columns: 1fr;
+            }
             .workflow-strip {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }
@@ -688,19 +761,37 @@ def _apply_visual_style() -> None:
 
 
 def _app_header() -> None:
-    """Render the branded app header."""
-    header_path = Path("assets") / "app_header.png"
-    if not header_path.exists():
-        st.title("TranslatAI")
-        return
+    """Render a compact dashboard-style branded header."""
+    source_words = len((st.session_state.get("source_text") or "").split())
+    file_count = len(st.session_state.get("source_files") or [])
+    project_label = st.session_state.get("project_name") or "New project"
+    active_steps = sum(
+        bool((st.session_state.get(key) or "").strip())
+        for key in ["source_text", "translation_prompt", "translated_text", "proofread_text", "qa_report"]
+    )
 
     st.markdown(
         f"""
         <div class="magic-header">
-            <img src="data:image/png;base64,{_image_base64(header_path)}" alt="">
+            <div class="magic-logo"><span>TranslatAI</span></div>
             <div class="magic-header-content">
+                <div class="magic-kicker">Translation workflow board</div>
                 <h1>TranslatAI</h1>
-                <p>AI-assisted translation, review, alignment, and delivery in one focused workspace.</p>
+                <p>{project_label} · AI-assisted translation, review, QA, and export.</p>
+            </div>
+            <div class="magic-header-stats">
+                <div class="magic-stat">
+                    <span>Source words</span>
+                    <strong>{source_words:,}</strong>
+                </div>
+                <div class="magic-stat">
+                    <span>Input files</span>
+                    <strong>{file_count}</strong>
+                </div>
+                <div class="magic-stat">
+                    <span>Steps active</span>
+                    <strong>{active_steps}/5</strong>
+                </div>
             </div>
         </div>
         """,
