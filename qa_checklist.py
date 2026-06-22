@@ -13,7 +13,7 @@ from openpyxl.utils import get_column_letter
 from openai_client import DEFAULT_MODEL, ask_openai
 
 
-CHECKLIST_HEADERS = [
+RULE_HEADERS = [
     "ID",
     "Approved",
     "Severity",
@@ -24,12 +24,32 @@ CHECKLIST_HEADERS = [
     "PM correction / instruction",
 ]
 
+SUGGESTION_HEADERS = [
+    "ID",
+    "Apply?",
+    "Scope",
+    "Priority",
+    "Suggestion",
+    "Find / affected wording",
+    "Preferred wording",
+    "Instruction to AI",
+    "PM note",
+]
+
+CHECKLIST_HEADERS = RULE_HEADERS
 APPROVED_VALUES = {"yes", "y", "true", "1", "approved", "approve", "x", "da"}
 HEADER_ROW = 8
 
 
 def build_qa_checklist_rows(rule_based_warnings: list[dict], qa_report: str) -> list[dict[str, str]]:
-    """Convert rule-based and GPT QA output into editable checklist rows."""
+    """Return legacy-compatible rows for tests and older callers."""
+    return build_rule_based_rows(rule_based_warnings) + [
+        _suggestion_as_legacy_row(row) for row in build_suggestion_rows(qa_report)
+    ]
+
+
+def build_rule_based_rows(rule_based_warnings: list[dict]) -> list[dict[str, str]]:
+    """Convert deterministic QA warnings into exact correction rows."""
     rows: list[dict[str, str]] = []
     for index, warning in enumerate(rule_based_warnings or [], start=1):
         rows.append(
@@ -42,20 +62,28 @@ def build_qa_checklist_rows(rule_based_warnings: list[dict], qa_report: str) -> 
                 "Source excerpt": str(warning.get("source excerpt") or ""),
                 "Target excerpt": str(warning.get("target excerpt") or ""),
                 "PM correction / instruction": "",
+                "Type": "rule",
             }
         )
+    return rows
 
+
+def build_suggestion_rows(qa_report: str) -> list[dict[str, str]]:
+    """Convert GPT QA notes into PM-friendly global suggestion rows."""
+    rows: list[dict[str, str]] = []
     for index, line in enumerate(_qa_report_lines(qa_report), start=1):
         rows.append(
             {
-                "ID": f"G{index}",
-                "Approved": "",
-                "Severity": "suggestion",
-                "Category": "GPT QA note",
-                "Issue": line,
-                "Source excerpt": "",
-                "Target excerpt": "",
-                "PM correction / instruction": "",
+                "ID": f"S{index}",
+                "Apply?": "",
+                "Scope": "Whole document",
+                "Priority": "Medium",
+                "Suggestion": line,
+                "Find / affected wording": "",
+                "Preferred wording": "",
+                "Instruction to AI": "",
+                "PM note": "",
+                "Type": "suggestion",
             }
         )
     return rows
@@ -63,81 +91,49 @@ def build_qa_checklist_rows(rule_based_warnings: list[dict], qa_report: str) -> 
 
 def create_qa_checklist_xlsx(rule_based_warnings: list[dict], qa_report: str) -> bytes:
     """Create an editable Excel checklist for PM approval/rejection."""
-    rows = build_qa_checklist_rows(rule_based_warnings, qa_report)
-    if not rows:
+    rule_rows = build_rule_based_rows(rule_based_warnings)
+    suggestion_rows = build_suggestion_rows(qa_report)
+    if not rule_rows and not suggestion_rows:
         raise ValueError("Run QA first before exporting a QA checklist.")
 
     workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "QA checklist"
-    header_fill = PatternFill("solid", fgColor="E91545")
-    header_font = Font(color="FFFFFF", bold=True)
-    title_fill = PatternFill("solid", fgColor="111827")
-    instruction_fill = PatternFill("solid", fgColor="FFF1F4")
-    approved_fill = PatternFill("solid", fgColor="FFF2CC")
-    thin_border = Border(
-        left=Side(style="thin", color="E5E7EB"),
-        right=Side(style="thin", color="E5E7EB"),
-        top=Side(style="thin", color="E5E7EB"),
-        bottom=Side(style="thin", color="E5E7EB"),
+    rule_sheet = workbook.active
+    _build_sheet(
+        rule_sheet,
+        "Rule-based corrections",
+        "Rule-based QA Corrections",
+        [
+            "Use this sheet for concrete segment-level issues such as missing numbers, empty targets, URLs, emails, or placeholders.",
+            "Set Approved to Yes only when the app should apply this correction.",
+            "Use PM correction / instruction when the exact correction needs clarification.",
+        ],
+        RULE_HEADERS,
+        rule_rows,
+        widths=[10, 14, 14, 24, 56, 42, 42, 56],
+        approval_column="B",
+        approval_prompt="Choose Yes only when this exact correction should be applied.",
     )
 
-    sheet.merge_cells("A1:H1")
-    sheet["A1"] = "TranslatAI QA Correction Checklist"
-    sheet["A1"].fill = title_fill
-    sheet["A1"].font = Font(color="FFFFFF", bold=True, size=16)
-    sheet["A1"].alignment = Alignment(vertical="center")
-    sheet.row_dimensions[1].height = 28
+    suggestion_sheet = workbook.create_sheet("Global suggestions")
+    _build_sheet(
+        suggestion_sheet,
+        "Global suggestions",
+        "PM Global Suggestions",
+        [
+            "Use this sheet for broader style, terminology, register, or consistency improvements.",
+            "Set Apply? to Yes only when the suggestion should be applied globally or by the selected scope.",
+            "Fill Find / affected wording and Preferred wording when you want a terminology or phrase change.",
+            "Use Instruction to AI for natural-language guidance such as: make the register more formal throughout.",
+        ],
+        SUGGESTION_HEADERS,
+        suggestion_rows,
+        widths=[10, 14, 22, 14, 58, 34, 34, 58, 36],
+        approval_column="B",
+        approval_prompt="Choose Yes only when this global suggestion should be applied.",
+        scope_column="C",
+        priority_column="D",
+    )
 
-    instructions = [
-        "How to use this checklist:",
-        "1. Review each QA item below.",
-        "2. In the yellow Approved column, choose Yes only for corrections that should be applied.",
-        "3. Use No for rejected items, or leave blank when undecided.",
-        "4. Add clear instructions in PM correction / instruction when the automatic issue text is not enough.",
-        "5. Save the XLSX and reupload it in TranslatAI, then click Apply approved QA corrections.",
-    ]
-    for offset, text in enumerate(instructions, start=2):
-        sheet.merge_cells(start_row=offset, start_column=1, end_row=offset, end_column=8)
-        cell = sheet.cell(row=offset, column=1, value=text)
-        cell.fill = instruction_fill
-        cell.alignment = Alignment(wrap_text=True, vertical="top")
-        cell.font = Font(bold=offset == 2, color="111827")
-
-    for column_index, header in enumerate(CHECKLIST_HEADERS, start=1):
-        sheet.cell(row=HEADER_ROW, column=column_index, value=header)
-    for cell in sheet[HEADER_ROW]:
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = Alignment(wrap_text=True, vertical="top")
-        cell.border = thin_border
-
-    for row_index, row in enumerate(rows, start=HEADER_ROW + 1):
-        for column_index, header in enumerate(CHECKLIST_HEADERS, start=1):
-            cell = sheet.cell(row=row_index, column=column_index, value=row.get(header, ""))
-            cell.alignment = Alignment(wrap_text=True, vertical="top")
-            cell.border = thin_border
-            if header == "Approved":
-                cell.fill = approved_fill
-            if header == "Severity":
-                _style_severity_cell(cell)
-
-    widths = [10, 14, 14, 24, 56, 42, 42, 56]
-    for column_index, width in enumerate(widths, start=1):
-        sheet.column_dimensions[get_column_letter(column_index)].width = width
-    for row_index in range(HEADER_ROW + 1, HEADER_ROW + len(rows) + 1):
-        sheet.row_dimensions[row_index].height = 58
-
-    validation = DataValidation(type="list", formula1='"Yes,No,Needs discussion"', allow_blank=True)
-    validation.error = "Choose Yes, No, or Needs discussion."
-    validation.errorTitle = "Invalid approval value"
-    validation.prompt = "Choose Yes only when this correction should be applied by the app."
-    validation.promptTitle = "Approval"
-    sheet.add_data_validation(validation)
-    validation.add(f"B{HEADER_ROW + 1}:B{HEADER_ROW + len(rows)}")
-
-    sheet.freeze_panes = f"A{HEADER_ROW + 1}"
-    sheet.auto_filter.ref = f"A{HEADER_ROW}:H{HEADER_ROW + len(rows)}"
     buffer = BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
@@ -149,48 +145,27 @@ def read_qa_checklist_xlsx(file_bytes: bytes) -> list[dict[str, str]]:
         raise ValueError("Upload a completed QA checklist first.")
 
     workbook = load_workbook(BytesIO(file_bytes), data_only=True)
-    sheet = workbook.active
-    rows = list(sheet.iter_rows(values_only=True))
-    if not rows:
-        raise ValueError("The QA checklist is empty.")
+    checklist_rows: list[dict[str, str]] = []
+    if "Rule-based corrections" in workbook.sheetnames:
+        checklist_rows.extend(_read_sheet(workbook["Rule-based corrections"], RULE_HEADERS, "rule"))
+    if "Global suggestions" in workbook.sheetnames:
+        checklist_rows.extend(_read_sheet(workbook["Global suggestions"], SUGGESTION_HEADERS, "suggestion"))
 
-    header_row_index = _find_header_row(rows)
-    headers = [str(value or "").strip() for value in rows[header_row_index]]
-    missing = [header for header in CHECKLIST_HEADERS if header not in headers]
-    if missing:
-        raise ValueError(
-            "This does not look like a QA checklist exported by the app. "
-            f"Missing column(s): {', '.join(missing)}."
-        )
+    if checklist_rows:
+        return checklist_rows
 
-    header_index = {header: headers.index(header) for header in CHECKLIST_HEADERS}
-    checklist_rows = []
-    for raw_row in rows[header_row_index + 1:]:
-        row = {
-            header: _cell_value(raw_row[header_index[header]] if header_index[header] < len(raw_row) else "")
-            for header in CHECKLIST_HEADERS
-        }
-        if any(value.strip() for value in row.values()):
-            checklist_rows.append(row)
-    return checklist_rows
-
-
-def _find_header_row(rows: list[tuple]) -> int:
-    """Find the checklist header row even when the sheet has instructions above it."""
-    for index, row in enumerate(rows):
-        headers = {str(value or "").strip() for value in row}
-        if {"ID", "Approved", "Issue", "PM correction / instruction"}.issubset(headers):
-            return index
-    raise ValueError("This does not look like a QA checklist exported by the app.")
+    # Backward compatibility with the previous one-sheet checklist.
+    return _read_sheet(workbook.active, RULE_HEADERS, "rule")
 
 
 def approved_checklist_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Return rows the PM approved for AI correction."""
     approved = []
     for row in rows or []:
-        value = str(row.get("Approved") or "").strip().casefold()
+        value = str(row.get("Approved") or row.get("Apply?") or "").strip().casefold()
         if value in APPROVED_VALUES:
-            approved.append({key: str(row.get(key) or "") for key in CHECKLIST_HEADERS})
+            normalized = {key: str(row.get(key) or "") for key in set(RULE_HEADERS + SUGGESTION_HEADERS + ["Type"])}
+            approved.append(normalized)
     return approved
 
 
@@ -220,8 +195,10 @@ Text type/domain: {domain}
 
 Rules:
 - Apply only approved checklist items.
-- Use the PM correction / instruction when it is supplied.
-- If that field is empty, use the Issue text as the correction instruction.
+- Apply rule-based corrections as exact/local corrections.
+- Apply approved global suggestions according to their Scope field.
+- For global terminology or phrase changes, use Find / affected wording and Preferred wording when supplied.
+- Use PM correction / instruction or Instruction to AI when supplied.
 - Keep the source meaning unchanged.
 - Do not introduce corrections from rejected or blank checklist rows.
 - Do not rewrite good text unnecessarily.
@@ -243,6 +220,142 @@ Current target translation:
     return corrected
 
 
+def _build_sheet(
+    sheet,
+    sheet_name: str,
+    title: str,
+    instructions: list[str],
+    headers: list[str],
+    rows: list[dict[str, str]],
+    widths: list[int],
+    approval_column: str,
+    approval_prompt: str,
+    scope_column: str | None = None,
+    priority_column: str | None = None,
+) -> None:
+    """Build one formatted PM checklist sheet."""
+    sheet.title = sheet_name
+    header_fill = PatternFill("solid", fgColor="E91545")
+    header_font = Font(color="FFFFFF", bold=True)
+    title_fill = PatternFill("solid", fgColor="111827")
+    instruction_fill = PatternFill("solid", fgColor="FFF1F4")
+    editable_fill = PatternFill("solid", fgColor="FFF2CC")
+    thin_border = Border(
+        left=Side(style="thin", color="E5E7EB"),
+        right=Side(style="thin", color="E5E7EB"),
+        top=Side(style="thin", color="E5E7EB"),
+        bottom=Side(style="thin", color="E5E7EB"),
+    )
+
+    last_column = len(headers)
+    sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last_column)
+    title_cell = sheet.cell(row=1, column=1, value=title)
+    title_cell.fill = title_fill
+    title_cell.font = Font(color="FFFFFF", bold=True, size=16)
+    title_cell.alignment = Alignment(vertical="center")
+    sheet.row_dimensions[1].height = 28
+
+    intro = ["How PMs should use this sheet:"] + instructions
+    for offset, text in enumerate(intro, start=2):
+        sheet.merge_cells(start_row=offset, start_column=1, end_row=offset, end_column=last_column)
+        cell = sheet.cell(row=offset, column=1, value=text)
+        cell.fill = instruction_fill
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+        cell.font = Font(bold=offset == 2, color="111827")
+
+    for column_index, header in enumerate(headers, start=1):
+        cell = sheet.cell(row=HEADER_ROW, column=column_index, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+        cell.border = thin_border
+
+    for row_index, row in enumerate(rows, start=HEADER_ROW + 1):
+        for column_index, header in enumerate(headers, start=1):
+            cell = sheet.cell(row=row_index, column=column_index, value=row.get(header, ""))
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+            cell.border = thin_border
+            if header in {"Approved", "Apply?", "PM correction / instruction", "Instruction to AI", "Find / affected wording", "Preferred wording"}:
+                cell.fill = editable_fill
+            if header == "Severity":
+                _style_severity_cell(cell)
+
+    for column_index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[get_column_letter(column_index)].width = width
+    for row_index in range(HEADER_ROW + 1, HEADER_ROW + len(rows) + 1):
+        sheet.row_dimensions[row_index].height = 64
+
+    _add_list_validation(
+        sheet,
+        f"{approval_column}{HEADER_ROW + 1}:{approval_column}{HEADER_ROW + max(len(rows), 1)}",
+        "Yes,No,Needs discussion",
+        approval_prompt,
+    )
+    if scope_column:
+        _add_list_validation(
+            sheet,
+            f"{scope_column}{HEADER_ROW + 1}:{scope_column}{HEADER_ROW + max(len(rows), 1)}",
+            "Whole document,Repeated phrase,Selected segment,Terminology only,Style/register",
+            "Choose the scope for this global suggestion.",
+        )
+    if priority_column:
+        _add_list_validation(
+            sheet,
+            f"{priority_column}{HEADER_ROW + 1}:{priority_column}{HEADER_ROW + max(len(rows), 1)}",
+            "High,Medium,Low",
+            "Choose the priority for this suggestion.",
+        )
+
+    sheet.freeze_panes = f"A{HEADER_ROW + 1}"
+    sheet.auto_filter.ref = f"A{HEADER_ROW}:{get_column_letter(last_column)}{HEADER_ROW + max(len(rows), 1)}"
+
+
+def _read_sheet(sheet, headers: list[str], row_type: str) -> list[dict[str, str]]:
+    """Read one formatted or legacy checklist sheet."""
+    rows = list(sheet.iter_rows(values_only=True))
+    if not rows:
+        return []
+    header_row_index = _find_header_row(rows, headers)
+    sheet_headers = [str(value or "").strip() for value in rows[header_row_index]]
+    missing = [header for header in headers if header not in sheet_headers]
+    if missing:
+        raise ValueError(
+            "This does not look like a QA checklist exported by the app. "
+            f"Missing column(s): {', '.join(missing)}."
+        )
+    header_index = {header: sheet_headers.index(header) for header in headers}
+    checklist_rows = []
+    for raw_row in rows[header_row_index + 1:]:
+        row = {
+            header: _cell_value(raw_row[header_index[header]] if header_index[header] < len(raw_row) else "")
+            for header in headers
+        }
+        row["Type"] = row_type
+        if any(value.strip() for value in row.values()):
+            checklist_rows.append(row)
+    return checklist_rows
+
+
+def _find_header_row(rows: list[tuple], headers: list[str]) -> int:
+    """Find the checklist header row even when the sheet has instructions above it."""
+    required = {"ID", "Issue"} if headers == RULE_HEADERS else {"ID", "Suggestion", "Scope"}
+    for index, row in enumerate(rows):
+        row_headers = {str(value or "").strip() for value in row}
+        if required.issubset(row_headers):
+            return index
+    raise ValueError("This does not look like a QA checklist exported by the app.")
+
+
+def _add_list_validation(sheet, cell_range: str, values: str, prompt: str) -> None:
+    validation = DataValidation(type="list", formula1=f'"{values}"', allow_blank=True)
+    validation.error = f"Choose one of: {values}."
+    validation.errorTitle = "Invalid value"
+    validation.prompt = prompt
+    validation.promptTitle = "PM checklist field"
+    sheet.add_data_validation(validation)
+    validation.add(cell_range)
+
+
 def _qa_report_lines(qa_report: str) -> list[str]:
     """Use concise non-empty GPT QA report lines as checklist items."""
     lines = []
@@ -253,23 +366,57 @@ def _qa_report_lines(qa_report: str) -> list[str]:
     return lines[:80]
 
 
+def _suggestion_as_legacy_row(row: dict[str, str]) -> dict[str, str]:
+    return {
+        "ID": row.get("ID", ""),
+        "Approved": row.get("Apply?", ""),
+        "Severity": "suggestion",
+        "Category": "GPT QA note",
+        "Issue": row.get("Suggestion", ""),
+        "Source excerpt": "",
+        "Target excerpt": "",
+        "PM correction / instruction": row.get("Instruction to AI", ""),
+        "Type": "suggestion",
+    }
+
+
 def _approved_rows_as_text(rows: list[dict[str, str]]) -> str:
     blocks = []
     for row in rows:
-        instruction = row.get("PM correction / instruction") or row.get("Issue") or ""
-        blocks.append(
-            "\n".join(
-                [
-                    f"ID: {row.get('ID', '')}",
-                    f"Severity: {row.get('Severity', '')}",
-                    f"Category: {row.get('Category', '')}",
-                    f"Issue: {row.get('Issue', '')}",
-                    f"Source excerpt: {row.get('Source excerpt', '')}",
-                    f"Target excerpt: {row.get('Target excerpt', '')}",
-                    f"Approved instruction: {instruction}",
-                ]
+        row_type = row.get("Type") or ("suggestion" if row.get("Suggestion") else "rule")
+        if row_type == "suggestion":
+            instruction = row.get("Instruction to AI") or row.get("Suggestion") or ""
+            blocks.append(
+                "\n".join(
+                    [
+                        f"Type: global suggestion",
+                        f"ID: {row.get('ID', '')}",
+                        f"Scope: {row.get('Scope', '')}",
+                        f"Priority: {row.get('Priority', '')}",
+                        f"Suggestion: {row.get('Suggestion', '')}",
+                        f"Find / affected wording: {row.get('Find / affected wording', '')}",
+                        f"Preferred wording: {row.get('Preferred wording', '')}",
+                        f"Approved instruction: {instruction}",
+                        f"PM note: {row.get('PM note', '')}",
+                    ]
+                )
             )
-        )
+        else:
+            instruction = row.get("PM correction / instruction") or row.get("Issue") or ""
+            blocks.append(
+                "\n".join(
+                    [
+                        f"Type: rule-based correction",
+                        f"ID: {row.get('ID', '')}",
+                        f"Severity: {row.get('Severity', '')}",
+                        f"Category: {row.get('Category', '')}",
+                        f"Issue: {row.get('Issue', '')}",
+                        f"Source excerpt: {row.get('Source excerpt', '')}",
+                        f"Target excerpt: {row.get('Target excerpt', '')}",
+                        f"Approved instruction: {instruction}",
+                    ]
+                )
+            )
     return "\n\n".join(blocks)
 
 
