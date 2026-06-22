@@ -241,22 +241,33 @@ def _align_chunk_with_recovery(
 
 def extract_text_from_xliff(file_bytes: bytes) -> tuple[str, str]:
     """Extract source and target text from an uploaded XLIFF/XLF file."""
-    root = ET.fromstring(file_bytes)
-    namespace = {"x": XLIFF_NS}
-    source_nodes = root.findall(".//x:trans-unit/x:source", namespace)
-    target_nodes = root.findall(".//x:trans-unit/x:target", namespace)
-
-    if not source_nodes:
-        source_nodes = root.findall(".//source")
-        target_nodes = root.findall(".//target")
-
-    source_text = "\n".join(_node_text(node) for node in source_nodes if _node_text(node).strip())
-    target_text = "\n".join(_node_text(node) for node in target_nodes if _node_text(node).strip())
+    pairs = extract_segment_pairs_from_xliff(file_bytes)
+    source_text = "\n".join(pair["source"] for pair in pairs if pair["source"].strip())
+    target_text = "\n".join(pair["target"] for pair in pairs if pair["target"].strip())
     if not source_text.strip():
         raise ValueError("No source segments were found in the XLIFF file.")
     if not target_text.strip():
         raise ValueError("No target segments were found in the XLIFF file.")
     return source_text, target_text
+
+
+def extract_segment_pairs_from_xliff(file_bytes: bytes) -> list[dict[str, str]]:
+    """Extract source/target segment pairs while preserving bilingual file order."""
+    root = ET.fromstring(file_bytes)
+    units = root.findall(".//{*}trans-unit") + root.findall(".//{*}unit")
+    pairs = []
+    for index, unit in enumerate(units, start=1):
+        source_node = _first_descendant(unit, "source")
+        target_node = _first_descendant(unit, "target")
+        source_node = _preferred_segment_element(source_node)
+        target_node = _preferred_segment_element(target_node)
+        source = _node_text(source_node) if source_node is not None else ""
+        target = _node_text(target_node) if target_node is not None else ""
+        if source.strip() or target.strip():
+            pairs.append({"id": str(unit.get("id") or index), "source": source, "target": target})
+    if not any(pair["source"].strip() for pair in pairs):
+        raise ValueError("No source segments were found in the XLIFF file.")
+    return pairs
 
 
 def quick_alignment_check(
@@ -374,7 +385,37 @@ def _quick_check_context(rows: list[dict[str, str]], weak_indices: list[int]) ->
 
 
 def _node_text(node) -> str:
-    return "".join(node.itertext()).strip()
+    if node is None:
+        return ""
+    return " ".join("".join(node.itertext()).split())
+
+
+def _first_descendant(element, local_name: str):
+    """Find the first descendant by local XML name regardless of namespace."""
+    for child in element.iter():
+        if _local_name(child.tag) == local_name:
+            return child
+    return None
+
+
+def _preferred_segment_element(container):
+    """Prefer one explicit segment marker where SDLXLIFF uses mrk segments."""
+    if container is None:
+        return None
+    segment_markers = []
+    for child in container.iter():
+        if _local_name(child.tag) != "mrk":
+            continue
+        marker_type = child.get("mtype") or child.get("type") or ""
+        if marker_type in {"seg", "x-sdl-seg"}:
+            segment_markers.append(child)
+    if len(segment_markers) == 1:
+        return segment_markers[0]
+    return container
+
+
+def _local_name(tag: str) -> str:
+    return tag.split("}", 1)[-1] if "}" in tag else tag
 
 
 def _parse_alignment_json(answer: str) -> list[dict[str, str]]:

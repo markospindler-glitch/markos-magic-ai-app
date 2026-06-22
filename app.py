@@ -78,7 +78,13 @@ from translator import translate_text
 from translation_memory import create_tmx, find_tm_matches, format_tm_matches, import_tm, updated_tmx_from_aligned_rows
 from text_stats import stats_label
 from ui_qa_export import render_qa_export_tab
-from xliff_aligner import align_fixed_source_segments, align_for_xliff, extract_text_from_xliff, quick_alignment_check
+from xliff_aligner import (
+    align_fixed_source_segments,
+    align_for_xliff,
+    extract_segment_pairs_from_xliff,
+    extract_text_from_xliff,
+    quick_alignment_check,
+)
 from xliff_to_docx import create_docx_from_xliff_and_template
 
 
@@ -2735,10 +2741,18 @@ def _realign_uploaded_xliff(uploaded_xliff, source_language: str, target_languag
         progress.update(20, "Reading uploaded bilingual file")
         uploaded_bytes = uploaded_xliff.getvalue()
         uploaded_type = uploaded_xliff.name.split(".")[-1].lower()
-        source_text, target_text = extract_text_from_xliff(uploaded_bytes)
+        segment_pairs = extract_segment_pairs_from_xliff(uploaded_bytes)
+        source_segments = [pair["source"] for pair in segment_pairs if pair["source"].strip()]
+        target_text = "\n".join(pair["target"] for pair in segment_pairs if pair["target"].strip())
+        if not target_text.strip():
+            raise ValueError(
+                "No target text was found in the uploaded bilingual file. "
+                "Re-alignment needs a bilingual file that already contains target translations."
+            )
+        source_text = "\n".join(source_segments)
         progress.update(45, "Re-aligning source and target")
-        rows = align_for_xliff(
-            source_text,
+        rows = align_fixed_source_segments(
+            source_segments,
             target_text,
             source_language,
             target_language,
