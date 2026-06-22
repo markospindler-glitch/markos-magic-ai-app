@@ -49,8 +49,8 @@ class QaChecklistTests(unittest.TestCase):
         )
         workbook = load_workbook(BytesIO(xlsx_bytes))
         sheet = workbook.active
-        sheet["B2"] = "Yes"
-        sheet["H2"] = "Change the target number to 10."
+        sheet["B9"] = "Yes"
+        sheet["H9"] = "Change the target number to 10."
         edited = BytesIO()
         workbook.save(edited)
 
@@ -60,6 +60,31 @@ class QaChecklistTests(unittest.TestCase):
         self.assertEqual(1, len(approved))
         self.assertEqual("Yes", approved[0]["Approved"])
         self.assertEqual("Change the target number to 10.", approved[0]["PM correction / instruction"])
+
+    def test_qa_checklist_excel_is_formatted_for_pm_use(self):
+        xlsx_bytes = create_qa_checklist_xlsx(
+            [
+                {
+                    "severity": "critical",
+                    "category": "Empty target",
+                    "message": "Target is empty.",
+                    "source excerpt": "Hello.",
+                    "target excerpt": "",
+                }
+            ],
+            "",
+        )
+        workbook = load_workbook(BytesIO(xlsx_bytes))
+        sheet = workbook.active
+
+        self.assertEqual("TranslatAI QA Correction Checklist", sheet["A1"].value)
+        self.assertIn("How to use this checklist", sheet["A2"].value)
+        self.assertEqual("Approved", sheet["B8"].value)
+        self.assertEqual("A9", sheet.freeze_panes)
+        self.assertEqual("A8:H9", sheet.auto_filter.ref)
+        self.assertGreaterEqual(len(sheet.data_validations.dataValidation), 1)
+        self.assertEqual("critical", sheet["C9"].value)
+        self.assertIsNotNone(sheet["C9"].fill.fgColor.rgb)
 
     def test_apply_approved_qa_corrections_sends_only_approved_rows(self):
         approved_rows = [

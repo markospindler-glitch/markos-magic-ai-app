@@ -6,7 +6,8 @@ from io import BytesIO
 from typing import Any
 
 from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import get_column_letter
 
 from openai_client import DEFAULT_MODEL, ask_openai
@@ -24,6 +25,7 @@ CHECKLIST_HEADERS = [
 ]
 
 APPROVED_VALUES = {"yes", "y", "true", "1", "approved", "approve", "x", "da"}
+HEADER_ROW = 8
 
 
 def build_qa_checklist_rows(rule_based_warnings: list[dict], qa_report: str) -> list[dict[str, str]]:
@@ -70,25 +72,72 @@ def create_qa_checklist_xlsx(rule_based_warnings: list[dict], qa_report: str) ->
     sheet.title = "QA checklist"
     header_fill = PatternFill("solid", fgColor="E91545")
     header_font = Font(color="FFFFFF", bold=True)
+    title_fill = PatternFill("solid", fgColor="111827")
+    instruction_fill = PatternFill("solid", fgColor="FFF1F4")
+    approved_fill = PatternFill("solid", fgColor="FFF2CC")
+    thin_border = Border(
+        left=Side(style="thin", color="E5E7EB"),
+        right=Side(style="thin", color="E5E7EB"),
+        top=Side(style="thin", color="E5E7EB"),
+        bottom=Side(style="thin", color="E5E7EB"),
+    )
 
-    sheet.append(CHECKLIST_HEADERS)
-    for cell in sheet[1]:
+    sheet.merge_cells("A1:H1")
+    sheet["A1"] = "TranslatAI QA Correction Checklist"
+    sheet["A1"].fill = title_fill
+    sheet["A1"].font = Font(color="FFFFFF", bold=True, size=16)
+    sheet["A1"].alignment = Alignment(vertical="center")
+    sheet.row_dimensions[1].height = 28
+
+    instructions = [
+        "How to use this checklist:",
+        "1. Review each QA item below.",
+        "2. In the yellow Approved column, choose Yes only for corrections that should be applied.",
+        "3. Use No for rejected items, or leave blank when undecided.",
+        "4. Add clear instructions in PM correction / instruction when the automatic issue text is not enough.",
+        "5. Save the XLSX and reupload it in TranslatAI, then click Apply approved QA corrections.",
+    ]
+    for offset, text in enumerate(instructions, start=2):
+        sheet.merge_cells(start_row=offset, start_column=1, end_row=offset, end_column=8)
+        cell = sheet.cell(row=offset, column=1, value=text)
+        cell.fill = instruction_fill
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+        cell.font = Font(bold=offset == 2, color="111827")
+
+    for column_index, header in enumerate(CHECKLIST_HEADERS, start=1):
+        sheet.cell(row=HEADER_ROW, column=column_index, value=header)
+    for cell in sheet[HEADER_ROW]:
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = Alignment(wrap_text=True, vertical="top")
+        cell.border = thin_border
 
-    for row in rows:
-        sheet.append([row.get(header, "") for header in CHECKLIST_HEADERS])
+    for row_index, row in enumerate(rows, start=HEADER_ROW + 1):
+        for column_index, header in enumerate(CHECKLIST_HEADERS, start=1):
+            cell = sheet.cell(row=row_index, column=column_index, value=row.get(header, ""))
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+            cell.border = thin_border
+            if header == "Approved":
+                cell.fill = approved_fill
+            if header == "Severity":
+                _style_severity_cell(cell)
 
     widths = [10, 14, 14, 24, 56, 42, 42, 56]
     for column_index, width in enumerate(widths, start=1):
         sheet.column_dimensions[get_column_letter(column_index)].width = width
-    for row in sheet.iter_rows(min_row=2):
-        for cell in row:
-            cell.alignment = Alignment(wrap_text=True, vertical="top")
+    for row_index in range(HEADER_ROW + 1, HEADER_ROW + len(rows) + 1):
+        sheet.row_dimensions[row_index].height = 58
 
-    sheet.freeze_panes = "A2"
-    sheet.auto_filter.ref = sheet.dimensions
+    validation = DataValidation(type="list", formula1='"Yes,No,Needs discussion"', allow_blank=True)
+    validation.error = "Choose Yes, No, or Needs discussion."
+    validation.errorTitle = "Invalid approval value"
+    validation.prompt = "Choose Yes only when this correction should be applied by the app."
+    validation.promptTitle = "Approval"
+    sheet.add_data_validation(validation)
+    validation.add(f"B{HEADER_ROW + 1}:B{HEADER_ROW + len(rows)}")
+
+    sheet.freeze_panes = f"A{HEADER_ROW + 1}"
+    sheet.auto_filter.ref = f"A{HEADER_ROW}:H{HEADER_ROW + len(rows)}"
     buffer = BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
@@ -105,7 +154,8 @@ def read_qa_checklist_xlsx(file_bytes: bytes) -> list[dict[str, str]]:
     if not rows:
         raise ValueError("The QA checklist is empty.")
 
-    headers = [str(value or "").strip() for value in rows[0]]
+    header_row_index = _find_header_row(rows)
+    headers = [str(value or "").strip() for value in rows[header_row_index]]
     missing = [header for header in CHECKLIST_HEADERS if header not in headers]
     if missing:
         raise ValueError(
@@ -115,7 +165,7 @@ def read_qa_checklist_xlsx(file_bytes: bytes) -> list[dict[str, str]]:
 
     header_index = {header: headers.index(header) for header in CHECKLIST_HEADERS}
     checklist_rows = []
-    for raw_row in rows[1:]:
+    for raw_row in rows[header_row_index + 1:]:
         row = {
             header: _cell_value(raw_row[header_index[header]] if header_index[header] < len(raw_row) else "")
             for header in CHECKLIST_HEADERS
@@ -123,6 +173,15 @@ def read_qa_checklist_xlsx(file_bytes: bytes) -> list[dict[str, str]]:
         if any(value.strip() for value in row.values()):
             checklist_rows.append(row)
     return checklist_rows
+
+
+def _find_header_row(rows: list[tuple]) -> int:
+    """Find the checklist header row even when the sheet has instructions above it."""
+    for index, row in enumerate(rows):
+        headers = {str(value or "").strip() for value in row}
+        if {"ID", "Approved", "Issue", "PM correction / instruction"}.issubset(headers):
+            return index
+    raise ValueError("This does not look like a QA checklist exported by the app.")
 
 
 def approved_checklist_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -218,3 +277,17 @@ def _cell_value(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _style_severity_cell(cell) -> None:
+    """Make severity easy to scan for PMs."""
+    severity = str(cell.value or "").casefold()
+    if severity == "critical":
+        cell.fill = PatternFill("solid", fgColor="FCA5A5")
+        cell.font = Font(bold=True, color="7F1D1D")
+    elif severity == "warning":
+        cell.fill = PatternFill("solid", fgColor="FDE68A")
+        cell.font = Font(bold=True, color="78350F")
+    elif severity == "suggestion":
+        cell.fill = PatternFill("solid", fgColor="DBEAFE")
+        cell.font = Font(bold=True, color="1E3A8A")
