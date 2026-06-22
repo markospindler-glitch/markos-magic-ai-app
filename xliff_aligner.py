@@ -13,6 +13,7 @@ TARGET_WINDOW_OVERLAP = 10
 MIN_SPLITTABLE_CHUNK_SIZE = 12
 QUICK_CHECK_BATCH_SIZE = 20
 QUICK_CHECK_CONTEXT_RADIUS = 2
+ORDER_BASED_CONFIDENCE = 75
 
 
 def align_for_xliff(
@@ -32,14 +33,6 @@ def align_for_xliff(
     target_segments = sentence_segments(target_text)
     if not target_segments:
         raise ValueError("No target segments found for XLIFF alignment.")
-
-    if len(source_segments) == len(target_segments) and len(source_segments) > MAX_ALIGNMENT_SEGMENTS_PER_REQUEST:
-        return _order_based_rows(
-            source_segments,
-            target_segments,
-            90,
-            "Source and target segment counts match; aligned by segment order.",
-        )
 
     if max(len(source_segments), len(target_segments)) > MAX_ALIGNMENT_SEGMENTS_PER_REQUEST:
         return _align_large_document(
@@ -76,14 +69,6 @@ def align_fixed_source_segments(
     target_segments = sentence_segments(target_text)
     if not target_segments:
         raise ValueError("No target segments found for bilingual alignment.")
-
-    if len(fixed_source_segments) == len(target_segments) and len(fixed_source_segments) > MAX_ALIGNMENT_SEGMENTS_PER_REQUEST:
-        return _order_based_rows(
-            fixed_source_segments,
-            target_segments,
-            90,
-            "Original bilingual source and target segment counts match; aligned by segment order.",
-        )
 
     if max(len(fixed_source_segments), len(target_segments)) > MAX_ALIGNMENT_SEGMENTS_PER_REQUEST:
         return _align_large_document(
@@ -194,6 +179,10 @@ def _align_large_document(
 
         for offset, row in enumerate(chunk_rows, start=start + 1):
             row["id"] = str(offset)
+            row["target_segment_ids"] = [
+                target_start + target_id
+                for target_id in _target_segment_ids(row.get("target_segment_ids"))
+            ]
             aligned_rows.append(row)
         target_cursor = _next_target_cursor(target_start, target_end, target_cursor, chunk_rows)
 
@@ -455,7 +444,67 @@ def _validate_rows(rows: list[dict[str, str]], source_segments: list[str]) -> li
                 "note": str(row.get("note") or "").strip(),
             }
         )
-    return validated
+    return _apply_alignment_sanity_checks(validated)
+
+
+def _apply_alignment_sanity_checks(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Lower confidence when structural clues show the alignment is not TM-safe."""
+    checked_rows = [dict(row) for row in rows]
+    target_id_counts: dict[int, int] = {}
+    for row in checked_rows:
+        for target_id in _target_segment_ids(row.get("target_segment_ids")):
+            target_id_counts[target_id] = target_id_counts.get(target_id, 0) + 1
+
+    previous_max_target_id = 0
+    for row in checked_rows:
+        source = str(row.get("source") or "").strip()
+        target = str(row.get("target") or "").strip()
+        target_ids = _target_segment_ids(row.get("target_segment_ids"))
+        confidence = _confidence(row.get("confidence"))
+        notes = []
+
+        if not target:
+            confidence = 0
+            notes.append("Empty target; cannot be considered aligned.")
+        if target and not target_ids:
+            confidence = min(confidence, 80)
+            notes.append("No target segment id evidence was returned.")
+        if any(target_id_counts.get(target_id, 0) > 1 for target_id in target_ids):
+            confidence = min(confidence, 70)
+            notes.append("Target segment id is reused by multiple source rows.")
+        if target_ids and min(target_ids) < previous_max_target_id:
+            confidence = min(confidence, 75)
+            notes.append("Target segment order moves backwards; review alignment.")
+        if _looks_like_untranslated_source(source, target):
+            confidence = min(confidence, 60)
+            notes.append("Target looks like copied source text.")
+
+        if target_ids:
+            previous_max_target_id = max(previous_max_target_id, max(target_ids))
+        row["confidence"] = confidence
+        if notes:
+            row["note"] = _append_note(str(row.get("note") or ""), " ".join(notes))
+    return checked_rows
+
+
+def _looks_like_untranslated_source(source: str, target: str) -> bool:
+    """Flag longer rows where source and target are effectively identical."""
+    source_norm = " ".join(source.casefold().split())
+    target_norm = " ".join(target.casefold().split())
+    if len(source_norm) < 35:
+        return False
+    return source_norm == target_norm or source_norm in target_norm
+
+
+def _append_note(existing: str, addition: str) -> str:
+    """Append one sanity-check note without creating noisy punctuation."""
+    existing = existing.strip()
+    addition = addition.strip()
+    if not existing:
+        return addition
+    if addition in existing:
+        return existing
+    return f"{existing} {addition}"
 
 
 def _target_window(

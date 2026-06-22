@@ -9,19 +9,19 @@ from xliff_aligner import align_fixed_source_segments, align_for_xliff
 
 
 class LargeXliffAlignerTests(unittest.TestCase):
-    def test_large_alignment_uses_order_when_segment_counts_match(self):
+    def test_large_alignment_checks_with_gpt_even_when_segment_counts_match(self):
         source = "\n".join(f"Source sentence {index}." for index in range(1, 66))
         target = "\n".join(f"Target sentence {index}." for index in range(1, 66))
 
-        with patch("xliff_aligner.ask_openai", side_effect=AssertionError("GPT should not be called")) as mocked:
+        with patch("xliff_aligner.ask_openai", side_effect=_fake_alignment_answer) as mocked:
             rows = align_for_xliff(source, target, "English", "Slovenian")
 
         self.assertEqual(65, len(rows))
         self.assertEqual("Source sentence 1.", rows[0]["source"])
         self.assertEqual("Target sentence 1.", rows[0]["target"])
-        self.assertEqual(90, rows[0]["confidence"])
+        self.assertEqual(95, rows[0]["confidence"])
         self.assertEqual("65", rows[-1]["id"])
-        mocked.assert_not_called()
+        self.assertGreater(mocked.call_count, 1)
 
     def test_fixed_source_segments_preserve_original_bilingual_segments(self):
         source_segments = [
@@ -78,6 +78,46 @@ class LargeXliffAlignerTests(unittest.TestCase):
         self.assertEqual(40, rows[0]["confidence"])
         self.assertIn("fallback", rows[0]["note"])
         self.assertEqual("62", rows[-1]["id"])
+
+    def test_alignment_sanity_checks_lower_suspicious_confidence(self):
+        source = "First source.\nSecond source.\nThird source."
+        target = "Prvi cilj.\nDrugi cilj.\nTretji cilj."
+        answer = json.dumps([
+            {
+                "id": "1",
+                "source": "First source.",
+                "target": "Prvi cilj.",
+                "target_segment_ids": [1],
+                "confidence": 98,
+                "note": "",
+            },
+            {
+                "id": "2",
+                "source": "Second source.",
+                "target": "Drugi cilj.",
+                "target_segment_ids": [1],
+                "confidence": 98,
+                "note": "",
+            },
+            {
+                "id": "3",
+                "source": "Third source.",
+                "target": "Tretji cilj.",
+                "target_segment_ids": [],
+                "confidence": 98,
+                "note": "",
+            },
+        ])
+
+        with patch("xliff_aligner.ask_openai", return_value=answer):
+            rows = align_for_xliff(source, target, "English", "Slovenian")
+
+        self.assertEqual(70, rows[0]["confidence"])
+        self.assertIn("reused", rows[0]["note"])
+        self.assertEqual(70, rows[1]["confidence"])
+        self.assertIn("reused", rows[1]["note"])
+        self.assertEqual(80, rows[2]["confidence"])
+        self.assertIn("No target segment id", rows[2]["note"])
 
 
 def _fake_alignment_answer(system_prompt: str, user_prompt: str, model: str) -> str:
