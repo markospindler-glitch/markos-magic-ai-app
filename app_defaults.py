@@ -28,6 +28,7 @@ APP_STATE_DEFAULTS = {
     "proofreading_baseline_text": "",
     "qa_report": "",
     "rule_based_qa_warnings": [],
+    "qa_checklist_status": "",
     "uploaded_file_metadata": {},
     "last_uploaded_source_signature": "",
     "source_files": [],

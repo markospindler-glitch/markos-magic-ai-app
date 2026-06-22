@@ -14,6 +14,13 @@ import streamlit as st
 
 from export_docx import create_docx
 from export_pdf import create_pdf
+from openai_client import DEFAULT_MODEL
+from qa_checklist import (
+    apply_approved_qa_corrections,
+    approved_checklist_rows,
+    create_qa_checklist_xlsx,
+    read_qa_checklist_xlsx,
+)
 from text_stats import stats_label
 
 
@@ -40,6 +47,7 @@ def render_qa_export_tab(
     )
     st.caption(f"QA report: {stats_label(st.session_state.qa_report)}")
     _qa_download_area(source_language, target_language, domain)
+    _qa_checklist_area(source_language, target_language, domain, model)
 
     export_area_callback(include_report, st.session_state.source_text, source_language, target_language, model)
 
@@ -106,6 +114,93 @@ def _qa_download_area(source_language: str, target_language: str, domain: str) -
             use_container_width=True,
             key="qa_report_txt_download",
         )
+
+
+def _qa_checklist_area(source_language: str, target_language: str, domain: str, model: str) -> None:
+    """Let PMs approve/reject QA items in Excel and apply approved corrections."""
+    has_qa = bool(st.session_state.rule_based_qa_warnings or st.session_state.qa_report.strip())
+    if not has_qa:
+        return
+
+    st.markdown("**QA correction checklist**")
+    st.caption(
+        "Download the Excel checklist, mark approved corrections in the Approved column "
+        "with Yes/X/Approved, optionally add PM instructions, then reupload it."
+    )
+    base_name = _qa_export_base_name()
+    col_download, col_upload = st.columns(2)
+    with col_download:
+        try:
+            st.download_button(
+                "Download QA checklist XLSX",
+                data=create_qa_checklist_xlsx(
+                    st.session_state.rule_based_qa_warnings,
+                    st.session_state.qa_report,
+                ),
+                file_name=f"{base_name}_qa_checklist.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="qa_checklist_xlsx_download",
+            )
+        except Exception as exc:
+            st.info(f"QA checklist will be available after QA exists. {exc}")
+    with col_upload:
+        uploaded = st.file_uploader(
+            "Reupload approved QA checklist",
+            type=["xlsx"],
+            key="qa_checklist_reupload",
+            help="Use the checklist exported by this app. Only approved rows are applied.",
+        )
+        if uploaded and st.button(
+            "Apply approved QA corrections",
+            use_container_width=True,
+            key="apply_qa_checklist_corrections",
+        ):
+            _apply_uploaded_qa_checklist(uploaded, source_language, target_language, domain, model)
+
+
+def _apply_uploaded_qa_checklist(uploaded_file, source_language: str, target_language: str, domain: str, model: str) -> None:
+    """Apply approved checklist items to the final translation."""
+    try:
+        rows = read_qa_checklist_xlsx(uploaded_file.getvalue())
+        approved_rows = approved_checklist_rows(rows)
+        if not approved_rows:
+            raise ValueError("No approved checklist rows found. Mark Approved as Yes, X, or Approved.")
+        current_target = st.session_state.proofread_text.strip() or st.session_state.translated_text.strip()
+        corrected = apply_approved_qa_corrections(
+            st.session_state.source_text,
+            current_target,
+            approved_rows,
+            target_language,
+            domain,
+            model=model.strip() or DEFAULT_MODEL,
+        )
+        st.session_state.proofread_text = corrected
+        st.session_state.qa_checklist_status = (
+            f"Applied {len(approved_rows)} approved QA correction(s) to the final translation."
+        )
+        _clear_stale_bilingual_exports()
+        st.success(st.session_state.qa_checklist_status)
+    except Exception as exc:
+        st.error(f"Approved QA corrections could not be applied: {exc}")
+
+
+def _clear_stale_bilingual_exports() -> None:
+    """Clear generated bilingual files that no longer match corrected text."""
+    for key, value in {
+        "aligned_xliff_bytes": b"",
+        "aligned_xliff_summary": "",
+        "aligned_rows": [],
+        "realigned_xliff_bytes": b"",
+        "realigned_xliff_summary": "",
+        "realigned_rows": [],
+        "realigned_template_name": "",
+        "realigned_template_type": "",
+        "realigned_template_bytes": b"",
+        "bilingual_review_rows": [],
+        "reflow_summary": "",
+    }.items():
+        st.session_state[key] = value
 
 
 def build_qa_export_body(
