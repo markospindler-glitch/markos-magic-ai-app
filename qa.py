@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from openai_client import DEFAULT_MODEL, ask_openai
+from translation_quality import QA_QUALITY_CHECKLIST
 
 
 def run_qa_check(
@@ -45,6 +46,8 @@ Check:
 - punctuation and formatting
 - high-risk mistranslations
 - compliance with client reference guidance
+
+{QA_QUALITY_CHECKLIST}
 
 Return a concise editable report with:
 Overall result

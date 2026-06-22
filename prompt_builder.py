@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from openai_client import DEFAULT_MODEL, ask_openai
 from batch_files import batch_prompt_instruction, has_file_markers
+from translation_quality import TRANSLATION_QUALITY_REQUIREMENTS
 
 
 def build_translation_prompt(
@@ -45,6 +46,9 @@ It must also instruct the model to:
 - Avoid adding information.
 - Return only the translated text.
 - End the prompt with this exact heading followed by the full source text: The text for translation:
+
+Include these quality requirements in the generated prompt:
+{TRANSLATION_QUALITY_REQUIREMENTS}
 
 Source-text analysis:
 {analysis_report}

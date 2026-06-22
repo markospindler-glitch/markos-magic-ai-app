@@ -154,6 +154,9 @@ def main() -> None:
         _price_list_area()
     _current_cost_area()
     _workflow_status()
+    _project_action_bar()
+    if st.session_state.show_project_repository:
+        _project_repository_main_area()
 
     source_tab, context_tab, prompt_tab, translation_tab, handout_tab, qa_export_tab, xliff_docx_tab = st.tabs(
         ["1 Source", "2 Context", "3 Prompt", "4 Translation", "5 Handout Translator", "6 QA & Export", "7. XLIFF → DOCX"]
@@ -740,6 +743,35 @@ def _apply_visual_style() -> None:
             border-radius: 8px;
             border: 1px solid var(--magic-border);
         }
+        .project-action-bar {
+            display: grid;
+            grid-template-columns: 1fr auto auto;
+            align-items: center;
+            gap: 0.75rem;
+            background: #ffffff;
+            border: 1px solid var(--magic-border);
+            border-radius: 8px;
+            padding: 0.8rem 0.9rem;
+            margin: 0.25rem 0 1rem 0;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+        }
+        .project-action-bar strong {
+            color: var(--magic-text);
+            display: block;
+            font-size: 0.98rem;
+        }
+        .project-action-bar span {
+            color: var(--magic-muted);
+            font-size: 0.84rem;
+        }
+        .project-repository-card {
+            background: #ffffff;
+            border: 1px solid var(--magic-border);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 0 0 1rem 0;
+            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.055);
+        }
         @media (max-width: 900px) {
             .magic-header {
                 grid-template-columns: 1fr;
@@ -749,6 +781,9 @@ def _apply_visual_style() -> None:
             }
             .workflow-strip {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .project-action-bar {
+                grid-template-columns: 1fr;
             }
             .net-grid-summary {
                 grid-template-columns: 1fr;
@@ -1095,11 +1130,79 @@ def _workflow_status() -> None:
     st.markdown(f"<div class=\"workflow-strip\">{''.join(pills)}</div>", unsafe_allow_html=True)
 
 
+def _project_action_bar() -> None:
+    """Show obvious project save and repository controls near the top of the app."""
+    project_name = st.session_state.project_name.strip() or "Unnamed project"
+    st.markdown(
+        f"""
+        <div class="project-action-bar">
+            <div>
+                <strong>Project repository</strong>
+                <span>Current project: {project_name}</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    save_col, repo_col = st.columns([1, 1])
+    with save_col:
+        if st.button("Save current project", type="primary", use_container_width=True, key="main_save_project"):
+            _save_current_project()
+    with repo_col:
+        label = "Hide project repository" if st.session_state.show_project_repository else "Open project repository"
+        if st.button(label, use_container_width=True, key="main_toggle_project_repository"):
+            st.session_state.show_project_repository = not st.session_state.show_project_repository
+            st.rerun()
+
+
+def _project_repository_main_area() -> None:
+    """Main-screen project browser for saved projects."""
+    projects = list_projects()
+    st.markdown('<div class="project-repository-card">', unsafe_allow_html=True)
+    st.subheader("Saved projects")
+    st.caption("Browse projects saved on this computer. Older saved projects are also shown when found.")
+    if not projects:
+        st.info("No saved projects were found in the local repository.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    table_rows = [
+        {
+            "Saved": project.get("saved_at", ""),
+            "Modified": project.get("modified_at", ""),
+            "Project": project.get("project_name", ""),
+            "Location": project.get("location", ""),
+            "File": Path(project.get("path", "")).name,
+        }
+        for project in projects
+    ]
+    st.dataframe(table_rows, hide_index=True, use_container_width=True)
+
+    labels = [project["label"] for project in projects]
+    selected = st.selectbox("Choose a saved project", labels, key="main_project_repository_select")
+    selected_project = projects[labels.index(selected)]
+    load_col, update_col, delete_col = st.columns(3)
+    with load_col:
+        if st.button("Load selected project", use_container_width=True, key="main_load_project"):
+            _load_saved_project(selected_project["path"])
+            st.rerun()
+    with update_col:
+        if st.button("Save updates to selected project", use_container_width=True, key="main_update_project"):
+            _update_saved_project(selected_project["path"])
+    with delete_col:
+        if st.button("Delete selected project", use_container_width=True, key="main_delete_project"):
+            _delete_saved_project(selected_project["path"])
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def _project_repository_sidebar() -> None:
     """Sidebar controls for saving and loading projects."""
     st.subheader("Project repository")
-    if st.button("Save current project", use_container_width=True):
+    if st.button("Save current project", use_container_width=True, key="sidebar_save_project"):
         _save_current_project()
+    if st.button("Open project repository", use_container_width=True, key="sidebar_open_project_repository"):
+        st.session_state.show_project_repository = True
+        st.rerun()
 
     projects = list_projects()
     if not projects:

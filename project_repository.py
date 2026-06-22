@@ -11,7 +11,9 @@ from pathlib import Path
 
 from app_defaults import PROJECT_SCHEMA_VERSION, PROJECT_STATE_DEFAULTS
 
-PROJECTS_DIR = Path("projects")
+APP_DIR = Path(__file__).resolve().parent
+PROJECTS_DIR = APP_DIR / "projects"
+LEGACY_PROJECTS_DIR = APP_DIR.parent / "projects"
 
 
 def save_project(project_name: str, state: dict) -> Path:
@@ -39,26 +41,15 @@ def save_project(project_name: str, state: dict) -> Path:
 def list_projects() -> list[dict[str, str]]:
     """List saved projects newest first."""
     PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
-    if not PROJECTS_DIR.exists():
-        return []
-
     projects = []
-    for path in sorted(PROJECTS_DIR.glob("*.json"), reverse=True):
-        if ".backup-" in path.stem:
+    for root in _project_roots():
+        if not root.exists():
             continue
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            projects.append(
-                {
-                    "path": str(path),
-                    "project_name": payload.get("project_name", path.stem),
-                    "saved_at": payload.get("saved_at", ""),
-                    "label": f"{payload.get('saved_at', '')} | {payload.get('project_name', path.stem)}",
-                }
-            )
-        except Exception:
-            continue
-    return projects
+        for path in root.glob("*.json"):
+            project = _project_list_item(path, legacy=root != PROJECTS_DIR)
+            if project:
+                projects.append(project)
+    return sorted(projects, key=lambda item: item.get("modified_at", ""), reverse=True)
 
 
 def load_project(path: str) -> dict:
@@ -108,10 +99,10 @@ def delete_project(path: str) -> Path:
 def _validated_project_path(path: str) -> Path:
     """Return a safe project path inside the local projects folder."""
     target = Path(path)
-    projects_root = PROJECTS_DIR.resolve()
     resolved_target = target.resolve()
 
-    if projects_root not in resolved_target.parents:
+    allowed_roots = [root.resolve() for root in _project_roots()]
+    if not any(root in resolved_target.parents for root in allowed_roots):
         raise ValueError("Selected project is outside the project repository.")
     if resolved_target.suffix.lower() != ".json":
         raise ValueError("Selected project is not a saved project file.")
@@ -145,3 +136,34 @@ def _backup_project_file(path: Path) -> Path:
 def _safe_name(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name.strip())
     return cleaned.strip("_") or "project"
+
+
+def _project_roots() -> list[Path]:
+    """Return current and old project folders so older saves remain visible."""
+    roots = [PROJECTS_DIR]
+    if LEGACY_PROJECTS_DIR != PROJECTS_DIR and LEGACY_PROJECTS_DIR.exists():
+        roots.append(LEGACY_PROJECTS_DIR)
+    return roots
+
+
+def _project_list_item(path: Path, legacy: bool = False) -> dict[str, str] | None:
+    """Read one saved project enough to show it in the repository list."""
+    if ".backup-" in path.stem:
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        modified = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        project_name = payload.get("project_name", path.stem)
+        saved_at = payload.get("saved_at", "")
+        location = "old repository" if legacy else "current repository"
+        label = f"{saved_at or modified} | {project_name} | {location}"
+        return {
+            "path": str(path),
+            "project_name": project_name,
+            "saved_at": saved_at,
+            "modified_at": modified,
+            "location": location,
+            "label": label,
+        }
+    except Exception:
+        return None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from openai_client import DEFAULT_MODEL, ask_openai
 from batch_files import batch_prompt_instruction, has_file_markers
+from translation_quality import PROOFREADING_QUALITY_REQUIREMENTS
 
 
 def proofread_translation(
@@ -35,6 +36,8 @@ Client reference guidance:
 {reference_context or "No client reference guidance supplied."}
 
 Instructions:
+{PROOFREADING_QUALITY_REQUIREMENTS}
+
 - Improve the text as a native-speaker proofreader.
 - Correct grammar, syntax, spelling, punctuation, terminology, register, and style.
 - Keep wording consistent with supplied Translation Memory context where appropriate.

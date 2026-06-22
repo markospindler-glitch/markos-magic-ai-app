@@ -51,6 +51,7 @@ APP_STATE_DEFAULTS = {
     "realigned_template_type": "",
     "realigned_template_bytes": b"",
     "show_price_list": False,
+    "show_project_repository": False,
     "reference_context": "",
     "reference_file_names": [],
     "cost_entries": [],

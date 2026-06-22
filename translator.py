@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from openai_client import DEFAULT_MODEL, ask_openai
+from translation_quality import TRANSLATION_QUALITY_REQUIREMENTS
 
 
 def translate_text(
@@ -32,9 +33,9 @@ def translate_text(
             f"{reference_context}"
         )
 
-    user_prompt = source_text
+    user_prompt = f"{TRANSLATION_QUALITY_REQUIREMENTS}\n\nSource text:\n{source_text}"
     if context_parts:
-        user_prompt = "\n\n".join(context_parts) + f"\n\nSource text:\n{source_text}"
+        user_prompt = "\n\n".join(context_parts) + f"\n\n{user_prompt}"
 
     return ask_openai(
         system_prompt=translation_prompt,

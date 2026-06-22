@@ -6,6 +6,8 @@ import re
 from collections import Counter
 from typing import Any
 
+from export_xliff import sentence_segments
+
 
 NUMBER_RE = re.compile(r"(?<![\w])[-+]?\d+(?:[.,]\d+)*(?:%?)")
 URL_RE = re.compile(r"\b(?:https?://|www\.)[^\s<>\"]+", re.IGNORECASE)
@@ -13,6 +15,7 @@ EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECAS
 PLACEHOLDER_RE = re.compile(
     r"\{\{\s*[\w. -]+\s*\}\}|\{\d+\}|\{[A-Za-z_][\w.]*\}|%[sd]"
 )
+WORD_RE = re.compile(r"\b\w+\b", re.UNICODE)
 
 
 def run_rule_based_qa(
@@ -22,7 +25,9 @@ def run_rule_based_qa(
 ) -> list[dict[str, Any]]:
     """Run deterministic source/target checks and return user-readable warnings."""
     warnings: list[dict[str, Any]] = []
-    for segment in _segments(source_text, target_text, review_rows):
+    segments = _segments(source_text, target_text, review_rows)
+    warnings.extend(_coverage_warnings(source_text, target_text, review_rows, segments))
+    for segment in segments:
         warnings.extend(_check_segment(segment["source"], segment["target"], segment["index"]))
     return warnings
 
@@ -65,6 +70,18 @@ def _check_segment(source: str, target: str, segment_index: Any) -> list[dict[st
         )
         return warnings
 
+    if _looks_like_copied_source(source_clean, target_clean):
+        warnings.append(
+            _warning(
+                "critical",
+                "Possible untranslated text",
+                "Target appears to contain the source text unchanged. Review this segment carefully.",
+                source,
+                target,
+                segment_index,
+            )
+        )
+
     warnings.extend(_compare_tokens("warning", "Number mismatch", NUMBER_RE, source, target, segment_index))
     warnings.extend(_compare_tokens("critical", "URL mismatch", URL_RE, source, target, segment_index))
     warnings.extend(_compare_tokens("critical", "Email mismatch", EMAIL_RE, source, target, segment_index))
@@ -72,6 +89,81 @@ def _check_segment(source: str, target: str, segment_index: Any) -> list[dict[st
         _compare_tokens("critical", "Placeholder mismatch", PLACEHOLDER_RE, source, target, segment_index)
     )
     return warnings
+
+
+def _coverage_warnings(
+    source_text: str,
+    target_text: str,
+    review_rows: list[dict[str, Any]] | None,
+    segments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Warn when the target appears shorter than the source in whole segments/paragraphs."""
+    warnings: list[dict[str, Any]] = []
+    if review_rows:
+        return warnings
+
+    source_segments = sentence_segments(source_text)
+    target_segments = sentence_segments(target_text)
+    if source_segments and len(target_segments) < len(source_segments):
+        missing_index = len(target_segments) + 1
+        missing_source = source_segments[missing_index - 1] if missing_index <= len(source_segments) else ""
+        warnings.append(
+            _warning(
+                "critical",
+                "Possible missing translation",
+                (
+                    f"Target has fewer sentence-like segments than the source "
+                    f"({len(target_segments)} target vs {len(source_segments)} source). "
+                    f"The first possibly missing source segment is segment {missing_index}."
+                ),
+                missing_source,
+                "",
+                missing_index,
+            )
+        )
+
+    source_paragraphs = _non_empty_lines(source_text)
+    target_paragraphs = _non_empty_lines(target_text)
+    if len(source_paragraphs) > 1 and len(target_paragraphs) < len(source_paragraphs):
+        missing_index = len(target_paragraphs) + 1
+        missing_source = source_paragraphs[missing_index - 1] if missing_index <= len(source_paragraphs) else ""
+        warnings.append(
+            _warning(
+                "critical",
+                "Possible missing paragraph",
+                (
+                    f"Target has fewer non-empty paragraphs/lines than the source "
+                    f"({len(target_paragraphs)} target vs {len(source_paragraphs)} source). "
+                    f"Review source paragraph/line {missing_index}."
+                ),
+                missing_source,
+                "",
+                missing_index,
+            )
+        )
+
+    return warnings
+
+
+def _looks_like_copied_source(source: str, target: str) -> bool:
+    """Detect longer source text that appears unchanged in the target."""
+    source_norm = _normalize_for_copy_check(source)
+    target_norm = _normalize_for_copy_check(target)
+    if len(source_norm) < 45:
+        return False
+    if len(WORD_RE.findall(source_norm)) < 7:
+        return False
+    return source_norm == target_norm or source_norm in target_norm
+
+
+def _normalize_for_copy_check(text: str) -> str:
+    """Normalize text enough to catch copied paragraphs without being too eager."""
+    return re.sub(r"\s+", " ", str(text).casefold()).strip()
+
+
+def _non_empty_lines(text: str) -> list[str]:
+    """Return non-empty source/target lines in document order."""
+    return [line.strip() for line in str(text).splitlines() if line.strip()]
 
 
 def _compare_tokens(

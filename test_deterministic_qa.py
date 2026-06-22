@@ -56,6 +56,26 @@ class DeterministicQATests(unittest.TestCase):
 
         self.assertEqual([], warnings)
 
+    def test_missing_target_paragraph_is_reported(self):
+        warnings = run_rule_based_qa(
+            "First paragraph has important client instructions.\nSecond paragraph must also be translated.",
+            "Prvi odstavek vsebuje pomembna navodila stranke.",
+        )
+        categories = {warning["category"] for warning in warnings}
+
+        self.assertIn("Possible missing translation", categories)
+        self.assertIn("Possible missing paragraph", categories)
+
+    def test_copied_source_paragraph_is_reported(self):
+        warnings = run_rule_based_qa(
+            "This entire paragraph was accidentally left in the original source language and needs translation.",
+            "This entire paragraph was accidentally left in the original source language and needs translation.",
+        )
+
+        self.assertEqual(1, len(warnings))
+        self.assertEqual("critical", warnings[0]["severity"])
+        self.assertEqual("Possible untranslated text", warnings[0]["category"])
+
 
 if __name__ == "__main__":
     unittest.main()
