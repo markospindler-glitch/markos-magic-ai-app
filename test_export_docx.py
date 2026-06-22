@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from io import BytesIO
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from docx import Document
 
@@ -62,6 +63,46 @@ class ExportDocxTests(unittest.TestCase):
 
         self.assertEqual("1", rows[0]["Segment"])
         self.assertEqual("Popravljen pozdrav", rows[0]["Target"])
+
+    def test_bilingual_review_docx_reads_tracked_insertions(self):
+        docx_bytes = create_bilingual_docx_from_rows(
+            [
+                {
+                    "id": "1",
+                    "source": "Hello",
+                    "target": "Old target",
+                    "confidence": 100,
+                    "note": "",
+                }
+            ]
+        )
+        corrected = _replace_docx_xml(
+            docx_bytes,
+            b"<w:t>Old target</w:t>",
+            (
+                b"<w:del><w:r><w:delText>Old target</w:delText></w:r></w:del>"
+                b"<w:ins><w:r><w:t>New visible target</w:t></w:r></w:ins>"
+            ),
+        )
+
+        rows = read_bilingual_docx_review(corrected)
+
+        self.assertEqual("New visible target", rows[0]["Target"])
+
+
+def _replace_docx_xml(docx_bytes: bytes, old: bytes, new: bytes) -> bytes:
+    output = BytesIO()
+    with ZipFile(BytesIO(docx_bytes), "r") as source_zip:
+        with ZipFile(output, "w", ZIP_DEFLATED) as target_zip:
+            for item in source_zip.infolist():
+                data = source_zip.read(item.filename)
+                if item.filename == "word/document.xml":
+                    self_check = old in data
+                    if not self_check:
+                        raise AssertionError("Expected XML snippet was not found in test DOCX.")
+                    data = data.replace(old, new, 1)
+                target_zip.writestr(item, data)
+    return output.getvalue()
 
 
 if __name__ == "__main__":

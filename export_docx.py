@@ -264,8 +264,42 @@ def _replace_text_nodes(text_nodes: list, replacement: str) -> None:
 
 
 def _cell_text(cell) -> str:
-    """Read all paragraph text from a Word table cell."""
-    return "\n".join(paragraph.text for paragraph in cell.paragraphs).strip()
+    """Read visible text from a Word table cell, including accepted insertions."""
+    paragraphs = []
+    for paragraph in cell.paragraphs:
+        text = _visible_paragraph_text(paragraph)
+        if text.strip():
+            paragraphs.append(text.strip())
+    return "\n".join(paragraphs).strip()
+
+
+def _visible_paragraph_text(paragraph) -> str:
+    """Read paragraph XML text while ignoring deleted tracked-change text."""
+    pieces = []
+    for element in paragraph._p.iter():
+        local_name = _local_xml_name(element.tag)
+        if _has_deleted_ancestor(element):
+            continue
+        if local_name == "t" and element.text:
+            pieces.append(element.text)
+        elif local_name == "tab":
+            pieces.append("\t")
+        elif local_name in {"br", "cr"}:
+            pieces.append("\n")
+    return "".join(pieces)
+
+
+def _has_deleted_ancestor(element) -> bool:
+    """Return True when a Word XML node is inside deleted/rejected text."""
+    for ancestor in element.iterancestors():
+        if _local_xml_name(ancestor.tag) in {"del", "moveFrom"}:
+            return True
+    return False
+
+
+def _local_xml_name(tag: str) -> str:
+    """Return the local part of a namespaced XML tag."""
+    return tag.split("}", 1)[-1] if "}" in tag else tag
 
 
 def _set_space_preserve(node, text: str) -> None:

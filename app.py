@@ -1774,7 +1774,10 @@ def _apply_bilingual_docx_review(corrected_docx) -> None:
         imported_rows = read_bilingual_docx_review(corrected_docx.getvalue())
         updated_count = _merge_bilingual_docx_rows(imported_rows)
         if updated_count == 0:
-            raise ValueError("No matching segment corrections were found in the uploaded DOCX.")
+            raise ValueError(
+                "The DOCX was read, but no target-cell changes were found. "
+                "Check that corrections were made in the Target column and that tracked changes were accepted or visible."
+            )
         st.session_state.proofread_text = target_text_from_rows(st.session_state.bilingual_review_rows)
         _clear_bilingual_outputs_after_review_change()
         st.session_state.bilingual_review_editor_version += 1
@@ -1802,6 +1805,9 @@ def _merge_bilingual_docx_rows(imported_rows: list[dict[str, str]]) -> int:
         if current is None:
             continue
         new_target = str(imported.get("Target") or "")
+        old_target = str(current.get("Target") or "")
+        if new_target == old_target:
+            continue
         current["Target"] = new_target
         note = str(current.get("Review note") or "").strip()
         imported_note = str(imported.get("Review note") or "").strip()
