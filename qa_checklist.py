@@ -28,6 +28,20 @@ SUGGESTION_HEADERS = [
     "ID",
     "Apply?",
     "Scope",
+    "Suggestion type",
+    "Priority",
+    "PM-friendly summary",
+    "Original QA suggestion",
+    "Find / affected wording",
+    "Preferred wording",
+    "AI action if approved",
+    "PM note",
+]
+
+LEGACY_SUGGESTION_HEADERS = [
+    "ID",
+    "Apply?",
+    "Scope",
     "Priority",
     "Suggestion",
     "Find / affected wording",
@@ -72,16 +86,20 @@ def build_suggestion_rows(qa_report: str) -> list[dict[str, str]]:
     """Convert GPT QA notes into PM-friendly global suggestion rows."""
     rows: list[dict[str, str]] = []
     for index, line in enumerate(_qa_report_lines(qa_report), start=1):
+        suggestion_type = _suggestion_type(line)
+        pm_summary = _pm_friendly_summary(line, suggestion_type)
         rows.append(
             {
                 "ID": f"S{index}",
                 "Apply?": "",
                 "Scope": "Whole document",
+                "Suggestion type": suggestion_type,
                 "Priority": "Medium",
-                "Suggestion": line,
+                "PM-friendly summary": pm_summary,
+                "Original QA suggestion": line,
                 "Find / affected wording": "",
                 "Preferred wording": "",
-                "Instruction to AI": "",
+                "AI action if approved": _default_ai_action(line, suggestion_type),
                 "PM note": "",
                 "Type": "suggestion",
             }
@@ -122,16 +140,18 @@ def create_qa_checklist_xlsx(rule_based_warnings: list[dict], qa_report: str) ->
         [
             "Use this sheet for broader style, terminology, register, or consistency improvements.",
             "Set Apply? to Yes only when the suggestion should be applied globally or by the selected scope.",
+            "Use Suggestion type and PM-friendly summary to decide quickly; Original QA suggestion keeps the source detail.",
             "Fill Find / affected wording and Preferred wording when you want a terminology or phrase change.",
-            "Use Instruction to AI for natural-language guidance such as: make the register more formal throughout.",
+            "Edit AI action if approved when you want to control exactly how the app applies the suggestion.",
         ],
         SUGGESTION_HEADERS,
         suggestion_rows,
-        widths=[10, 14, 22, 14, 58, 34, 34, 58, 36],
+        widths=[10, 14, 22, 20, 14, 42, 58, 34, 34, 58, 36],
         approval_column="B",
         approval_prompt="Choose Yes only when this global suggestion should be applied.",
         scope_column="C",
-        priority_column="D",
+        priority_column="E",
+        suggestion_type_column="D",
     )
 
     buffer = BytesIO()
@@ -149,7 +169,7 @@ def read_qa_checklist_xlsx(file_bytes: bytes) -> list[dict[str, str]]:
     if "Rule-based corrections" in workbook.sheetnames:
         checklist_rows.extend(_read_sheet(workbook["Rule-based corrections"], RULE_HEADERS, "rule"))
     if "Global suggestions" in workbook.sheetnames:
-        checklist_rows.extend(_read_sheet(workbook["Global suggestions"], SUGGESTION_HEADERS, "suggestion"))
+        checklist_rows.extend(_read_suggestion_sheet(workbook["Global suggestions"]))
 
     if checklist_rows:
         return checklist_rows
@@ -198,7 +218,7 @@ Rules:
 - Apply rule-based corrections as exact/local corrections.
 - Apply approved global suggestions according to their Scope field.
 - For global terminology or phrase changes, use Find / affected wording and Preferred wording when supplied.
-- Use PM correction / instruction or Instruction to AI when supplied.
+- Use PM correction / instruction or AI action if approved when supplied.
 - Keep the source meaning unchanged.
 - Do not introduce corrections from rejected or blank checklist rows.
 - Do not rewrite good text unnecessarily.
@@ -232,6 +252,7 @@ def _build_sheet(
     approval_prompt: str,
     scope_column: str | None = None,
     priority_column: str | None = None,
+    suggestion_type_column: str | None = None,
 ) -> None:
     """Build one formatted PM checklist sheet."""
     sheet.title = sheet_name
@@ -275,7 +296,14 @@ def _build_sheet(
             cell = sheet.cell(row=row_index, column=column_index, value=row.get(header, ""))
             cell.alignment = Alignment(wrap_text=True, vertical="top")
             cell.border = thin_border
-            if header in {"Approved", "Apply?", "PM correction / instruction", "Instruction to AI", "Find / affected wording", "Preferred wording"}:
+            if header in {
+                "Approved",
+                "Apply?",
+                "PM correction / instruction",
+                "AI action if approved",
+                "Find / affected wording",
+                "Preferred wording",
+            }:
                 cell.fill = editable_fill
             if header == "Severity":
                 _style_severity_cell(cell)
@@ -304,6 +332,13 @@ def _build_sheet(
             f"{priority_column}{HEADER_ROW + 1}:{priority_column}{HEADER_ROW + max(len(rows), 1)}",
             "High,Medium,Low",
             "Choose the priority for this suggestion.",
+        )
+    if suggestion_type_column:
+        _add_list_validation(
+            sheet,
+            f"{suggestion_type_column}{HEADER_ROW + 1}:{suggestion_type_column}{HEADER_ROW + max(len(rows), 1)}",
+            "Terminology,Style/register,Consistency,Fluency,Accuracy,Formatting,Other",
+            "Classify the type of linguistic suggestion.",
         )
 
     sheet.freeze_panes = f"A{HEADER_ROW + 1}"
@@ -336,9 +371,23 @@ def _read_sheet(sheet, headers: list[str], row_type: str) -> list[dict[str, str]
     return checklist_rows
 
 
+def _read_suggestion_sheet(sheet) -> list[dict[str, str]]:
+    """Read the current PM-friendly suggestion sheet, with support for older exports."""
+    try:
+        return _read_sheet(sheet, SUGGESTION_HEADERS, "suggestion")
+    except ValueError:
+        legacy_rows = _read_sheet(sheet, LEGACY_SUGGESTION_HEADERS, "suggestion")
+        return [_modernize_legacy_suggestion_row(row) for row in legacy_rows]
+
+
 def _find_header_row(rows: list[tuple], headers: list[str]) -> int:
     """Find the checklist header row even when the sheet has instructions above it."""
-    required = {"ID", "Issue"} if headers == RULE_HEADERS else {"ID", "Suggestion", "Scope"}
+    if headers == RULE_HEADERS:
+        required = {"ID", "Issue"}
+    elif headers == LEGACY_SUGGESTION_HEADERS:
+        required = {"ID", "Suggestion", "Scope"}
+    else:
+        required = {"ID", "PM-friendly summary", "Scope"}
     for index, row in enumerate(rows):
         row_headers = {str(value or "").strip() for value in row}
         if required.issubset(row_headers):
@@ -372,10 +421,29 @@ def _suggestion_as_legacy_row(row: dict[str, str]) -> dict[str, str]:
         "Approved": row.get("Apply?", ""),
         "Severity": "suggestion",
         "Category": "GPT QA note",
-        "Issue": row.get("Suggestion", ""),
+        "Issue": row.get("PM-friendly summary", ""),
         "Source excerpt": "",
         "Target excerpt": "",
-        "PM correction / instruction": row.get("Instruction to AI", ""),
+        "PM correction / instruction": row.get("AI action if approved", ""),
+        "Type": "suggestion",
+    }
+
+
+def _modernize_legacy_suggestion_row(row: dict[str, str]) -> dict[str, str]:
+    suggestion = row.get("Suggestion", "")
+    suggestion_type = _suggestion_type(suggestion)
+    return {
+        "ID": row.get("ID", ""),
+        "Apply?": row.get("Apply?", ""),
+        "Scope": row.get("Scope", ""),
+        "Suggestion type": suggestion_type,
+        "Priority": row.get("Priority", ""),
+        "PM-friendly summary": _pm_friendly_summary(suggestion, suggestion_type) if suggestion else "",
+        "Original QA suggestion": suggestion,
+        "Find / affected wording": row.get("Find / affected wording", ""),
+        "Preferred wording": row.get("Preferred wording", ""),
+        "AI action if approved": row.get("Instruction to AI", "") or _default_ai_action(suggestion, suggestion_type),
+        "PM note": row.get("PM note", ""),
         "Type": "suggestion",
     }
 
@@ -385,15 +453,17 @@ def _approved_rows_as_text(rows: list[dict[str, str]]) -> str:
     for row in rows:
         row_type = row.get("Type") or ("suggestion" if row.get("Suggestion") else "rule")
         if row_type == "suggestion":
-            instruction = row.get("Instruction to AI") or row.get("Suggestion") or ""
+            instruction = row.get("AI action if approved") or row.get("PM-friendly summary") or row.get("Original QA suggestion") or ""
             blocks.append(
                 "\n".join(
                     [
                         f"Type: global suggestion",
                         f"ID: {row.get('ID', '')}",
                         f"Scope: {row.get('Scope', '')}",
+                        f"Suggestion type: {row.get('Suggestion type', '')}",
                         f"Priority: {row.get('Priority', '')}",
-                        f"Suggestion: {row.get('Suggestion', '')}",
+                        f"PM-friendly summary: {row.get('PM-friendly summary', '')}",
+                        f"Original QA suggestion: {row.get('Original QA suggestion', '')}",
                         f"Find / affected wording: {row.get('Find / affected wording', '')}",
                         f"Preferred wording: {row.get('Preferred wording', '')}",
                         f"Approved instruction: {instruction}",
@@ -438,3 +508,54 @@ def _style_severity_cell(cell) -> None:
     elif severity == "suggestion":
         cell.fill = PatternFill("solid", fgColor="DBEAFE")
         cell.font = Font(bold=True, color="1E3A8A")
+
+
+def _suggestion_type(text: str) -> str:
+    """Classify a GPT QA note into a PM-friendly bucket."""
+    lowered = text.casefold()
+    if any(word in lowered for word in ["term", "terminology", "glossary", "preferred wording"]):
+        return "Terminology"
+    if any(word in lowered for word in ["register", "tone", "formal", "informal", "style"]):
+        return "Style/register"
+    if any(word in lowered for word in ["consistent", "consistency", "repeated", "same source"]):
+        return "Consistency"
+    if any(word in lowered for word in ["fluent", "awkward", "natural", "readability", "phrasing"]):
+        return "Fluency"
+    if any(word in lowered for word in ["meaning", "mistranslation", "omission", "addition", "accuracy"]):
+        return "Accuracy"
+    if any(word in lowered for word in ["punctuation", "format", "spacing", "capitalization"]):
+        return "Formatting"
+    return "Other"
+
+
+def _pm_friendly_summary(text: str, suggestion_type: str) -> str:
+    """Make raw linguistic QA notes easier for PMs to scan."""
+    cleaned = " ".join(str(text or "").split())
+    prefixes = {
+        "Terminology": "Terminology decision needed",
+        "Style/register": "Style/register decision needed",
+        "Consistency": "Consistency decision needed",
+        "Fluency": "Fluency improvement suggested",
+        "Accuracy": "Meaning/accuracy check needed",
+        "Formatting": "Formatting/punctuation check needed",
+        "Other": "Linguistic suggestion",
+    }
+    return f"{prefixes.get(suggestion_type, 'Linguistic suggestion')}: {cleaned}"
+
+
+def _default_ai_action(text: str, suggestion_type: str) -> str:
+    """Pre-fill an actionable instruction PMs can edit instead of starting blank."""
+    cleaned = " ".join(str(text or "").split())
+    if suggestion_type == "Terminology":
+        return f"Apply this terminology preference consistently where appropriate: {cleaned}"
+    if suggestion_type == "Style/register":
+        return f"Adjust the affected wording to match the approved style/register: {cleaned}"
+    if suggestion_type == "Consistency":
+        return f"Harmonize repeated or similar wording according to this suggestion: {cleaned}"
+    if suggestion_type == "Fluency":
+        return f"Improve fluency only where this issue appears, without changing meaning: {cleaned}"
+    if suggestion_type == "Accuracy":
+        return f"Correct the target only where this meaning/accuracy issue is present: {cleaned}"
+    if suggestion_type == "Formatting":
+        return f"Fix formatting, punctuation, spacing, or capitalization according to this suggestion: {cleaned}"
+    return f"Apply this approved linguistic suggestion conservatively: {cleaned}"

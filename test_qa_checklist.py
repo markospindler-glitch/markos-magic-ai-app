@@ -4,7 +4,7 @@ import unittest
 from io import BytesIO
 from unittest.mock import patch
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from qa_checklist import (
     apply_approved_qa_corrections,
@@ -41,7 +41,10 @@ class QaChecklistTests(unittest.TestCase):
         self.assertEqual("S1", rows[0]["ID"])
         self.assertEqual("Whole document", rows[0]["Scope"])
         self.assertEqual("Medium", rows[0]["Priority"])
-        self.assertIn("client-approved term", rows[0]["Suggestion"])
+        self.assertEqual("Terminology", rows[0]["Suggestion type"])
+        self.assertIn("Terminology decision needed", rows[0]["PM-friendly summary"])
+        self.assertIn("client-approved term", rows[0]["Original QA suggestion"])
+        self.assertIn("terminology preference", rows[0]["AI action if approved"])
 
     def test_qa_checklist_excel_round_trip_reads_approved_rows(self):
         xlsx_bytes = create_qa_checklist_xlsx(
@@ -76,7 +79,7 @@ class QaChecklistTests(unittest.TestCase):
         sheet = workbook["Global suggestions"]
         sheet["B9"] = "Yes"
         sheet["C9"] = "Style/register"
-        sheet["H9"] = "Make the translation more formal throughout."
+        sheet["J9"] = "Make the translation more formal throughout."
         edited = BytesIO()
         workbook.save(edited)
 
@@ -86,7 +89,28 @@ class QaChecklistTests(unittest.TestCase):
         self.assertEqual(1, len(approved))
         self.assertEqual("suggestion", approved[0]["Type"])
         self.assertEqual("Style/register", approved[0]["Scope"])
-        self.assertEqual("Make the translation more formal throughout.", approved[0]["Instruction to AI"])
+        self.assertEqual("Make the translation more formal throughout.", approved[0]["AI action if approved"])
+
+    def test_qa_checklist_reads_older_global_suggestion_sheet(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Global suggestions"
+        sheet.append(["Older instructions"])
+        sheet.append([])
+        sheet.append(["ID", "Apply?", "Scope", "Priority", "Suggestion", "Find / affected wording", "Preferred wording", "Instruction to AI", "PM note"])
+        sheet.append(["S1", "Yes", "Whole document", "High", "Use approved terminology consistently.", "", "", "Apply approved terminology.", "Client request."])
+        edited = BytesIO()
+        workbook.save(edited)
+
+        rows = read_qa_checklist_xlsx(edited.getvalue())
+        approved = approved_checklist_rows(rows)
+
+        self.assertEqual(1, len(approved))
+        self.assertEqual("suggestion", approved[0]["Type"])
+        self.assertEqual("Terminology", approved[0]["Suggestion type"])
+        self.assertIn("Terminology decision needed", approved[0]["PM-friendly summary"])
+        self.assertEqual("Use approved terminology consistently.", approved[0]["Original QA suggestion"])
+        self.assertEqual("Apply approved terminology.", approved[0]["AI action if approved"])
 
     def test_qa_checklist_excel_is_formatted_for_pm_use(self):
         xlsx_bytes = create_qa_checklist_xlsx(
@@ -121,9 +145,11 @@ class QaChecklistTests(unittest.TestCase):
         self.assertEqual("PM Global Suggestions", sheet["A1"].value)
         self.assertEqual("Apply?", sheet["B8"].value)
         self.assertEqual("Scope", sheet["C8"].value)
-        self.assertEqual("Priority", sheet["D8"].value)
-        self.assertEqual("Suggestion", sheet["E8"].value)
-        self.assertGreaterEqual(len(sheet.data_validations.dataValidation), 3)
+        self.assertEqual("Suggestion type", sheet["D8"].value)
+        self.assertEqual("Priority", sheet["E8"].value)
+        self.assertEqual("PM-friendly summary", sheet["F8"].value)
+        self.assertEqual("Original QA suggestion", sheet["G8"].value)
+        self.assertGreaterEqual(len(sheet.data_validations.dataValidation), 4)
 
     def test_apply_approved_qa_corrections_sends_only_approved_rows(self):
         approved_rows = [
@@ -159,11 +185,13 @@ class QaChecklistTests(unittest.TestCase):
                 "ID": "S1",
                 "Apply?": "Yes",
                 "Scope": "Whole document",
+                "Suggestion type": "Terminology",
                 "Priority": "High",
-                "Suggestion": "Use preferred term globally.",
+                "PM-friendly summary": "Terminology decision needed: Use preferred term globally.",
+                "Original QA suggestion": "Use preferred term globally.",
                 "Find / affected wording": "old term",
                 "Preferred wording": "preferred term",
-                "Instruction to AI": "Replace the old term wherever appropriate.",
+                "AI action if approved": "Replace the old term wherever appropriate.",
                 "PM note": "Client glossary.",
                 "Type": "suggestion",
             }
@@ -180,6 +208,7 @@ class QaChecklistTests(unittest.TestCase):
         prompt = mocked.call_args.args[1]
         self.assertIn("Type: global suggestion", prompt)
         self.assertIn("Scope: Whole document", prompt)
+        self.assertIn("Suggestion type: Terminology", prompt)
         self.assertIn("preferred term", prompt)
 
 
