@@ -119,6 +119,55 @@ class LargeXliffAlignerTests(unittest.TestCase):
         self.assertEqual(80, rows[2]["confidence"])
         self.assertIn("No target segment id", rows[2]["note"])
 
+    def test_alignment_sanity_checks_target_id_traceability(self):
+        source = "First source.\nSecond source."
+        target = "Correct first target.\nCorrect second target."
+        answer = json.dumps([
+            {
+                "id": "1",
+                "source": "First source.",
+                "target": "Unrelated target wording.",
+                "target_segment_ids": [1],
+                "confidence": 98,
+                "note": "",
+            },
+            {
+                "id": "2",
+                "source": "Second source.",
+                "target": "Correct second target.",
+                "target_segment_ids": [2],
+                "confidence": 98,
+                "note": "",
+            },
+        ])
+
+        with patch("xliff_aligner.ask_openai", return_value=answer):
+            rows = align_for_xliff(source, target, "English", "Slovenian")
+
+        self.assertEqual(65, rows[0]["confidence"])
+        self.assertIn("does not closely match", rows[0]["note"])
+        self.assertEqual(98, rows[1]["confidence"])
+
+    def test_alignment_sanity_checks_number_mismatch(self):
+        source = "Pay invoice 10 by 12/05/2026."
+        target = "Placajte racun 11 do 12/05/2026."
+        answer = json.dumps([
+            {
+                "id": "1",
+                "source": source,
+                "target": target,
+                "target_segment_ids": [1],
+                "confidence": 98,
+                "note": "",
+            }
+        ])
+
+        with patch("xliff_aligner.ask_openai", return_value=answer):
+            rows = align_for_xliff(source, target, "English", "Slovenian")
+
+        self.assertEqual(65, rows[0]["confidence"])
+        self.assertIn("Number/date evidence differs", rows[0]["note"])
+
 
 def _fake_alignment_answer(system_prompt: str, user_prompt: str, model: str) -> str:
     del system_prompt, model

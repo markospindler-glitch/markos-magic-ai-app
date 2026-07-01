@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from difflib import SequenceMatcher
 from xml.etree import ElementTree as ET
 
 from export_xliff import XLIFF_NS, sentence_segments
@@ -140,7 +142,7 @@ Target candidate segments:
 """
     answer = ask_openai(system_prompt, user_prompt, model=model)
     rows = _parse_alignment_json(answer)
-    return _validate_rows(rows, source_segments)
+    return _validate_rows(rows, source_segments, target_segments)
 
 
 def _align_large_document(
@@ -186,7 +188,7 @@ def _align_large_document(
             aligned_rows.append(row)
         target_cursor = _next_target_cursor(target_start, target_end, target_cursor, chunk_rows)
 
-    return _validate_rows(aligned_rows, source_segments)
+    return _validate_rows(aligned_rows, source_segments, target_segments)
 
 
 def _align_chunk_with_recovery(
@@ -424,7 +426,11 @@ def _parse_alignment_json(answer: str) -> list[dict[str, str]]:
     return data
 
 
-def _validate_rows(rows: list[dict[str, str]], source_segments: list[str]) -> list[dict[str, str]]:
+def _validate_rows(
+    rows: list[dict[str, str]],
+    source_segments: list[str],
+    target_segments: list[str] | None = None,
+) -> list[dict[str, str]]:
     if len(rows) != len(source_segments):
         raise ValueError(
             f"Alignment returned {len(rows)} rows, but source has {len(source_segments)} segments."
@@ -444,10 +450,13 @@ def _validate_rows(rows: list[dict[str, str]], source_segments: list[str]) -> li
                 "note": str(row.get("note") or "").strip(),
             }
         )
-    return _apply_alignment_sanity_checks(validated)
+    return _apply_alignment_sanity_checks(validated, target_segments)
 
 
-def _apply_alignment_sanity_checks(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+def _apply_alignment_sanity_checks(
+    rows: list[dict[str, str]],
+    target_segments: list[str] | None = None,
+) -> list[dict[str, str]]:
     """Lower confidence when structural clues show the alignment is not TM-safe."""
     checked_rows = [dict(row) for row in rows]
     target_id_counts: dict[int, int] = {}
@@ -469,6 +478,19 @@ def _apply_alignment_sanity_checks(rows: list[dict[str, str]]) -> list[dict[str,
         if target and not target_ids:
             confidence = min(confidence, 80)
             notes.append("No target segment id evidence was returned.")
+        if target_ids and target_segments:
+            selected_target = _selected_target_text(target_segments, target_ids)
+            similarity = _text_similarity(target, selected_target)
+            if selected_target and similarity < 0.72:
+                confidence = min(confidence, 65)
+                notes.append(
+                    "Target text does not closely match the returned target segment id(s); review alignment."
+                )
+        if target and target_segments and not target_ids:
+            best_similarity = max((_text_similarity(target, candidate) for candidate in target_segments), default=0.0)
+            if best_similarity < 0.72:
+                confidence = min(confidence, 60)
+                notes.append("Target text is not clearly traceable to provided target candidates.")
         if any(target_id_counts.get(target_id, 0) > 1 for target_id in target_ids):
             confidence = min(confidence, 70)
             notes.append("Target segment id is reused by multiple source rows.")
@@ -478,6 +500,10 @@ def _apply_alignment_sanity_checks(rows: list[dict[str, str]]) -> list[dict[str,
         if _looks_like_untranslated_source(source, target):
             confidence = min(confidence, 60)
             notes.append("Target looks like copied source text.")
+        structural_penalty = _structural_alignment_penalty(source, target)
+        if structural_penalty:
+            confidence = min(confidence, structural_penalty["confidence"])
+            notes.append(structural_penalty["note"])
 
         if target_ids:
             previous_max_target_id = max(previous_max_target_id, max(target_ids))
@@ -485,6 +511,79 @@ def _apply_alignment_sanity_checks(rows: list[dict[str, str]]) -> list[dict[str,
         if notes:
             row["note"] = _append_note(str(row.get("note") or ""), " ".join(notes))
     return checked_rows
+
+
+def _selected_target_text(target_segments: list[str], target_ids: list[int]) -> str:
+    """Join target candidates selected by one-based ids returned by the aligner."""
+    selected = []
+    for target_id in target_ids:
+        index = target_id - 1
+        if 0 <= index < len(target_segments):
+            selected.append(target_segments[index])
+    return " ".join(segment.strip() for segment in selected if segment.strip())
+
+
+def _text_similarity(left: str, right: str) -> float:
+    """Compare text after normalizing whitespace and case."""
+    left_norm = " ".join(str(left or "").casefold().split())
+    right_norm = " ".join(str(right or "").casefold().split())
+    if not left_norm or not right_norm:
+        return 0.0
+    if left_norm in right_norm or right_norm in left_norm:
+        return 1.0
+    return SequenceMatcher(None, left_norm, right_norm).ratio()
+
+
+def _structural_alignment_penalty(source: str, target: str) -> dict[str, object] | None:
+    """Use free/local clues to downgrade rows that look unsafe for TM storage."""
+    source_numbers = _significant_numbers(source)
+    target_numbers = _significant_numbers(target)
+    if source_numbers != target_numbers:
+        return {
+            "confidence": 65,
+            "note": "Number/date evidence differs between source and target; review alignment.",
+        }
+
+    source_placeholders = _placeholder_tokens(source)
+    target_placeholders = _placeholder_tokens(target)
+    if source_placeholders != target_placeholders:
+        return {
+            "confidence": 55,
+            "note": "Placeholder/tag evidence differs between source and target; review alignment.",
+        }
+
+    source_proper = _portable_proper_tokens(source)
+    target_proper = _portable_proper_tokens(target)
+    missing_proper = sorted(source_proper - target_proper)
+    if len(missing_proper) >= 2:
+        return {
+            "confidence": 75,
+            "note": "Several names/codes from source are missing in target; review alignment.",
+        }
+    return None
+
+
+def _significant_numbers(text: str) -> list[str]:
+    """Extract numbers that usually have to travel with the correct segment."""
+    return re.findall(r"\b\d+(?:[.,:/-]\d+)*\b", str(text or ""))
+
+
+def _placeholder_tokens(text: str) -> list[str]:
+    """Extract common CAT/software placeholders that should stay aligned."""
+    pattern = r"\{\{[^{}]+\}\}|\{[^{}]+\}|%[sd]|\[\[[^\[\]]+\]\]|<[^>]+>"
+    return sorted(re.findall(pattern, str(text or "")))
+
+
+def _portable_proper_tokens(text: str) -> set[str]:
+    """Find uppercase-ish names/codes likely to be shared across languages."""
+    tokens = set()
+    for match in re.findall(r"\b[A-ZČŠŽĆĐ][\wČŠŽĆĐčšžćđ-]{2,}\b", str(text or "")):
+        if match.casefold() in {"The", "This", "That", "For", "And", "But"}:
+            continue
+        tokens.add(match.casefold())
+    for match in re.findall(r"\b[A-Z]{2,}[-_]?\d*\b", str(text or "")):
+        tokens.add(match.casefold())
+    return tokens
 
 
 def _looks_like_untranslated_source(source: str, target: str) -> bool:

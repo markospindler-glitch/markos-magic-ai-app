@@ -300,7 +300,7 @@ def main() -> None:
         col_build, col_apply = st.columns(2)
         with col_build:
             if st.button("Build bilingual review table", use_container_width=True):
-                _build_bilingual_review_table(st.session_state.source_text)
+                _build_bilingual_review_table(st.session_state.source_text, source_language, target_language, model)
         with col_apply:
             if st.button("Apply reviewed target text", use_container_width=True):
                 _apply_bilingual_review_table()
@@ -325,11 +325,12 @@ def main() -> None:
                 use_container_width=True,
                 height=520,
                 num_rows="fixed",
-                disabled=["Segment", "Source"],
-                column_order=["Open", "Segment", "Source", "Target", "Review note"],
+                disabled=["Segment", "Source", "Confidence"],
+                column_order=["Open", "Segment", "Confidence", "Source", "Target", "Review note"],
                 column_config={
                     "Open": st.column_config.CheckboxColumn("Open", width="small"),
                     "Segment": st.column_config.NumberColumn("Segment", width="small"),
+                    "Confidence": st.column_config.NumberColumn("Confidence", width="small"),
                     "Source": st.column_config.TextColumn("Source", width="large"),
                     "Target": st.column_config.TextColumn("Target", width="large"),
                     "Review note": st.column_config.TextColumn("Review note", width="medium"),
@@ -1692,30 +1693,58 @@ def _qa(
         st.error(f"QA check failed: {exc}")
 
 
-def _build_bilingual_review_table(source_text: str) -> None:
+def _build_bilingual_review_table(
+    source_text: str,
+    source_language: str,
+    target_language: str,
+    model: str,
+) -> None:
     """Create editable source/target rows for manual bilingual review."""
+    progress = StepProgress("Bilingual review table")
     try:
         target_text = _final_translation_text()
+        progress.update(25, "Segmenting and aligning source/target text")
         fixed_segments = _fixed_bilingual_source_segments(source_text)
         if fixed_segments:
-            target_segments = sentence_segments(target_text)
-            max_rows = max(len(fixed_segments), len(target_segments))
-            st.session_state.bilingual_review_rows = [
-                {
-                    "Segment": index + 1,
-                    "Source": fixed_segments[index] if index < len(fixed_segments) else "",
-                    "Target": target_segments[index] if index < len(target_segments) else "",
-                    "Review note": "Original SDLXLIFF/XLIFF source segment." if index < len(fixed_segments) else "",
-                }
-                for index in range(max_rows)
-            ]
+            rows = align_fixed_source_segments(
+                fixed_segments,
+                target_text,
+                source_language,
+                target_language,
+                model=model.strip() or DEFAULT_MODEL,
+            )
         else:
-            st.session_state.bilingual_review_rows = build_review_rows(source_text, target_text)
-        _ensure_bilingual_review_open_flags()
-        st.session_state.bilingual_review_editor_version += 1
-        st.success(f"Built bilingual review table with {len(st.session_state.bilingual_review_rows)} rows.")
+            rows = align_for_xliff(
+                source_text,
+                target_text,
+                source_language,
+                target_language,
+                model=model.strip() or DEFAULT_MODEL,
+            )
+        progress.update(70, "Preparing editable bilingual rows")
+        st.session_state.aligned_rows = rows
+        st.session_state.aligned_xliff_bytes = create_xliff_from_aligned_rows(
+            rows,
+            source_language,
+            target_language,
+            aligned_cleanly=True,
+        )
+        st.session_state.aligned_xliff_summary = _alignment_summary("Manual bilingual review alignment", rows)
+        _sync_bilingual_review_rows_from_alignment(rows)
+        _add_cost_entry("Bilingual review table alignment", source_text + "\n\n" + target_text, str(rows))
+        progress.done("Bilingual review table ready")
+        st.success(st.session_state.aligned_xliff_summary)
     except Exception as exc:
-        st.error(f"Bilingual review table failed: {exc}")
+        try:
+            st.session_state.bilingual_review_rows = build_review_rows(source_text, target_text)
+            _ensure_bilingual_review_open_flags()
+            st.session_state.bilingual_review_editor_version += 1
+            st.warning(
+                "Precise alignment failed, so the app built a simple fallback table. "
+                f"Please review carefully. Technical detail: {exc}"
+            )
+        except Exception:
+            st.error(f"Bilingual review table failed: {exc}")
 
 
 def _apply_bilingual_review_table() -> None:
@@ -1862,6 +1891,7 @@ def _realign_bilingual_review_table(
             {
                 "Open": False,
                 "Segment": index,
+                "Confidence": row.get("confidence", 0),
                 "Source": row.get("source", ""),
                 "Target": row.get("target", ""),
                 "Review note": row.get("note", ""),
@@ -2866,6 +2896,7 @@ def _sync_bilingual_review_rows_from_alignment(rows: list[dict[str, str]]) -> No
         {
             "Open": False,
             "Segment": index,
+            "Confidence": row.get("confidence", 0),
             "Source": row.get("source", ""),
             "Target": row.get("target", ""),
             "Review note": row.get("note", ""),
@@ -3286,7 +3317,7 @@ def _review_table_aligned_rows() -> list[dict[str, str]]:
             continue
         segment_id = str(row.get("Segment") or index)
         note = str(row.get("Review note") or "").strip()
-        confidence = 100 if source and target else 0
+        confidence = int(row.get("Confidence", 100 if source and target else 0) or 0)
         if not source:
             note = (note + " " if note else "") + "Missing source segment in manual review table."
         if not target:
